@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta charset="UTF-8" />
+    <title>Game Suite</title>
+    <link rel="stylesheet" href="styles.css" />
+    <style>
+      /* Basic styles for the game menu and container */
+      #gameMenu { padding: 20px; }
+      .game-options { display: flex; gap: 10px; margin-top: 10px; justify-content: center; }
+      .grid { display: grid; gap: 5px; }
+      .grid-3x3 { grid-template-columns: repeat(3, 1fr); }
+      .cell { padding: 20px; border: 1px solid #ccc; text-align: center; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <!-- Game Screen (visible immediately) -->
+    <div id="gameScreen">
+      <div id="gameMenu">
+        <h2>Choose a Game</h2>
+        <div class="game-options">
+          <button id="btn-tictactoe">Tic Tac Toe</button>
+          <button id="btn-gomoku">Gomoku</button>
+          <button id="btn-dots">Dots & Boxes</button>
+          <button id="btn-connect4">Connect Four</button>
+        </div>
+      </div>
+      <div id="gameContainer">
+        <!-- Game content will be rendered dynamically here -->
+      </div>
+    </div>
+    <script type="application/javascript" src="app.js"></script>
+  </body>
+</html>

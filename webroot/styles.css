@@ -1,0 +1,1532 @@
+/* Enhanced Global styling for modern, accessible UI with comprehensive light/dark mode support */
+* {
+  box-sizing: border-box;
+}
+
+:root {
+    /* Light mode colors with improved contrast */
+    --bg-primary: linear-gradient(135deg, #4a6ee0 0%, #6a489c 100%);
+    --bg-secondary: #ffffff;
+    --bg-tertiary: #f8f9fa;
+    --text-primary: #222222;
+    --text-secondary: #444444;
+    --text-light: #ffffff;
+    --text-muted: #666666;
+    --border-color: #ced4da;
+    --border-dark: #000000;
+    --shadow-light: rgba(0, 0, 0, 0.1);
+    --shadow-medium: rgba(0, 0, 0, 0.2);
+    --shadow-heavy: rgba(0, 0, 0, 0.3);
+    --cell-bg: linear-gradient(135deg, #fff 0%, #f8f9fa 100%);
+    --cell-hover: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    --modal-bg: linear-gradient(135deg, #fff 0%, #f8f9fa 100%);
+    --leaderboard-bg: #ffffff;
+    --table-stripe: #f8f9fa;
+    --table-hover: #e9ecef;
+    --instruction-bg: #ffffff;
+    --instruction-text: #222222;
+    --instruction-border: #667eea;
+    
+    /* Game-specific colors */
+    --chess-light-square: #f0d9b5;
+    --chess-dark-square: #b58863;
+    --chess-border: #8b4513;
+    --chess-white-piece: #ffffff;
+    --chess-black-piece: #000000;
+    --chess-notation: #666666;
+    --chess-selected: #ffff00;
+    --chess-possible: #90EE90;
+    --chess-check: #ff4444;
+    
+    /* Dots game colors */
+    --dots-green-bg: #008000;
+    --dots-yellow-bg: #ffff00;
+    --dots-red-bg: #ff0000;
+    --dots-blue-bg: #0000ff;
+    --dots-inner-bg: #ffffff;
+    --dots-box-shadow: #808080;
+    --dots-border: #000000;
+    --dots-multicolor-shadow: inset 0 25px 10px 0 #ffff00, inset 0 -25px 10px 0 #ff0000, inset 50px 0 50px 0 #008000, inset 0 0 50px 35px #0000ff;
+    
+    /* Token colors for dots game */
+    --token-red: linear-gradient(#ff0000, #ffbfac);
+    --token-green: linear-gradient(#008000, #5eff00);
+    --token-yellow: linear-gradient(#ffff00, #ffa600);
+    --token-blue: linear-gradient(#0000ff, #006eff);
+}
+
+/* Dark mode colors with improved contrast */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg-primary: linear-gradient(135deg, #2d3748 0%, #4a5568 100%);
+        --bg-secondary: #1a202c;
+        --bg-tertiary: #2d3748;
+        --text-primary: #e2e8f0;
+        --text-secondary: #cbd5e0;
+        --text-light: #ffffff;
+        --text-muted: #a0aec0;
+        --border-color: #4a5568;
+        --border-dark: #ffffff;
+        --shadow-light: rgba(0, 0, 0, 0.3);
+        --shadow-medium: rgba(0, 0, 0, 0.4);
+        --shadow-heavy: rgba(0, 0, 0, 0.6);
+        --cell-bg: linear-gradient(135deg, #4a5568 0%, #2d3748 100%);
+        --cell-hover: linear-gradient(135deg, #2d3748 0%, #1a202c 100%);
+        --modal-bg: linear-gradient(135deg, #2d3748 0%, #1a202c 100%);
+        --leaderboard-bg: #1a202c;
+        --table-stripe: #2d3748;
+        --table-hover: #4a5568;
+        --instruction-bg: #2d3748;
+        --instruction-text: #e2e8f0;
+        --instruction-border: #a0aec0;
+        
+        /* Game-specific dark mode colors */
+        --chess-light-square: #4a5568;
+        --chess-dark-square: #2d3748;
+        --chess-border: #a0aec0;
+        --chess-white-piece: #ffffff;
+        --chess-black-piece: #000000;
+        --chess-notation: #a0aec0;
+        --chess-selected: #ffd700;
+        --chess-possible: #32cd32;
+        --chess-check: #ff6b6b;
+        
+        /* Dots game dark mode colors */
+        --dots-green-bg: #2d5016;
+        --dots-yellow-bg: #5c5c00;
+        --dots-red-bg: #5c1616;
+        --dots-blue-bg: #16165c;
+        --dots-inner-bg: #2d3748;
+        --dots-box-shadow: #4a5568;
+        --dots-border: #a0aec0;
+        --dots-multicolor-shadow: inset 0 25px 10px 0 #5c5c00, inset 0 -25px 10px 0 #5c1616, inset 50px 0 50px 0 #2d5016, inset 0 0 50px 35px #16165c;
+        
+        /* Token colors for dots game dark mode */
+        --token-red: linear-gradient(#ff4444, #ff8a80);
+        --token-green: linear-gradient(#4caf50, #81c784);
+        --token-yellow: linear-gradient(#ffeb3b, #fff176);
+        --token-blue: linear-gradient(#2196f3, #64b5f6);
+  }
+}
+
+html {
+  height: 100%;
+  overflow-x: hidden;
+  scroll-behavior: smooth;
+  /* Prevent horizontal scroll completely */
+  max-width: 100vw;
+}
+
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-light);
+  margin: 0;
+  padding: 10px;
+  text-align: center;
+  /* Fix height and overflow for proper scrolling */
+  min-height: 100vh;
+  height: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  position: relative;
+  /* Prevent horizontal scroll */
+  max-width: 100vw;
+  /* Ensure proper touch scrolling on mobile */
+  -webkit-overflow-scrolling: touch;
+  /* Prevent pull-to-refresh on mobile */
+  overscroll-behavior-y: contain;
+  /* Prevent zoom on double tap */
+  touch-action: manipulation;
+}
+
+/* Three.js Canvas Styles */
+.threejs-canvas {
+  display: block;
+  width: 100%;
+  height: 400px;
+  max-width: min(95vw, 500px);
+  margin: 15px auto;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px var(--shadow-heavy);
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  cursor: pointer;
+  touch-action: none;
+}
+
+/* UI Overlay Styles for 3D Games */
+.game-ui-overlay {
+  position: relative;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.game-ui-overlay > * {
+  pointer-events: auto;
+}
+
+/* Enhanced status displays for 3D games */
+.status-display-3d {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  color: var(--text-primary);
+  padding: clamp(10px, 2vw, 15px) clamp(15px, 3vw, 25px);
+  margin: 10px auto;
+  max-width: min(95vw, 500px);
+  border-radius: 12px;
+  font-size: clamp(0.9em, 2vw, 1.1em);
+  font-weight: 600;
+  box-shadow: 0 4px 12px var(--shadow-light);
+  border-left: 5px solid #667eea;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  hyphens: auto;
+  position: relative;
+  z-index: 20;
+}
+
+/* Timer display for 3D games */
+.timer-display-3d {
+  background: rgba(255, 107, 107, 0.95);
+  backdrop-filter: blur(10px);
+  color: white;
+  padding: clamp(8px, 1.5vw, 10px) clamp(12px, 2.5vw, 20px);
+  margin: 10px auto;
+  max-width: min(90vw, 300px);
+  border-radius: 25px;
+  font-size: clamp(1em, 2.5vw, 1.2em);
+  font-weight: bold;
+  box-shadow: 0 4px 12px rgba(255, 107, 107, 0.3);
+  animation: timerPulse 1s infinite;
+  overflow-wrap: break-word;
+  position: relative;
+  z-index: 20;
+}
+
+/* Loading indicator for 3D scenes */
+.threejs-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: white;
+  font-size: 1.2em;
+  z-index: 30;
+  pointer-events: none;
+}
+
+.loading-spinner {
+  border: 3px solid rgba(255, 255, 255, 0.3);
+  border-top: 3px solid white;
+  border-radius: 50%;
+  width: 30px;
+  height: 30px;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 10px;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+/* Remove fullscreen body class restrictions that cause scroll traps */
+body.fullscreen {
+  /* Allow normal scrolling in fullscreen */
+  overflow-y: auto;
+  height: auto;
+  min-height: 100vh;
+  max-height: none;
+}
+
+.fullscreen-container {
+  /* Allow normal scrolling */
+  height: auto;
+  min-height: 100vh;
+  max-height: none;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding: 10px;
+}
+
+h1, h2, h3, p {
+  margin: 8px 0;
+  color: var(--text-light);
+}
+
+h1 {
+  font-size: clamp(1.5em, 4vw, 2.5em);
+  text-shadow: 2px 2px 4px var(--shadow-medium);
+  margin-bottom: 15px;
+}
+
+h2 {
+  font-size: clamp(1.2em, 3vw, 1.8em);
+}
+
+h3 {
+  font-size: clamp(1em, 2.5vw, 1.4em);
+}
+
+/* Enhanced Button Styling */
+button {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: var(--text-light);
+  border: none;
+  padding: clamp(8px, 2vw, 12px) clamp(16px, 4vw, 24px);
+  margin: 6px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: clamp(0.8em, 2vw, 1em);
+  font-weight: 600;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 12px var(--shadow-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  min-height: 44px; /* Touch-friendly minimum */
+  /* Prevent text selection */
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  /* Prevent zoom on double tap */
+  touch-action: manipulation;
+}
+
+button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px var(--shadow-heavy);
+  background: linear-gradient(135deg, #5a67d8 0%, #6b46c1 100%);
+}
+
+button:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 8px var(--shadow-medium);
+}
+
+button:disabled {
+  background: #6c757d;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Enhanced Grid layouts for game boards */
+.grid {
+  display: grid;
+  gap: clamp(4px, 1vw, 8px);
+  margin: 15px auto;
+  background: var(--bg-secondary);
+  padding: clamp(8px, 2vw, 15px);
+  border-radius: 15px;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 32px var(--shadow-medium);
+  /* Prevent overflow */
+  max-width: calc(100vw - 20px);
+  overflow: hidden;
+}
+
+.grid-3x3 {
+  grid-template-columns: repeat(3, 1fr);
+  width: min(90vw, 350px);
+  aspect-ratio: 1;
+}
+
+/* Enhanced Tic Tac Toe cells */
+.cell {
+  background: var(--cell-bg);
+  color: var(--text-primary);
+  border: 2px solid #667eea;
+  cursor: pointer;
+  user-select: none;
+  border-radius: 12px;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: clamp(1.5em, 4vw, 2.5em);
+  box-shadow: 0 4px 12px var(--shadow-light);
+  min-height: 60px;
+  /* Prevent text selection */
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  /* Prevent zoom on double tap */
+  touch-action: manipulation;
+}
+
+.cell:hover {
+  background: var(--cell-hover);
+  transform: scale(1.05);
+  box-shadow: 0 6px 16px var(--shadow-medium);
+}
+
+.cell.occupied {
+  background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+  color: white;
+  cursor: not-allowed;
+}
+
+/* Enhanced Connect 4 Board Styling */
+#connect4Board {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: clamp(3px, 0.8vw, 8px);
+  width: min(95vw, 450px);
+  aspect-ratio: 7 / 6;
+  background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+  padding: clamp(8px, 2vw, 15px);
+  border-radius: 12px;
+  position: relative;
+  margin: 15px auto;
+  box-shadow: 0 8px 32px var(--shadow-heavy);
+  backdrop-filter: blur(10px);
+  /* Prevent overflow */
+  max-width: calc(100vw - 20px);
+  overflow: hidden;
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  cursor: pointer;
+  justify-content: space-around;
+  border-radius: 6px;
+  transition: all 0.3s ease;
+  gap: clamp(2px, 0.5vw, 4px);
+  /* Prevent text selection */
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  /* Prevent zoom on double tap */
+  touch-action: manipulation;
+}
+
+.column:hover {
+  background: rgba(255, 255, 255, 0.1);
+  transform: scale(1.02);
+}
+
+.connect4-cell {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: #f8f9fa;
+  border: clamp(1px, 0.3vw, 2px) solid var(--text-primary);
+  transition: all 0.3s ease;
+  position: relative;
+  box-shadow: inset 0 2px 4px var(--shadow-light);
+  /* Prevent zoom on double tap */
+  touch-action: manipulation;
+}
+
+.connect4-cell.red {
+  background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+  box-shadow: 0 2px 8px rgba(220, 53, 69, 0.4);
+  border-color: #a71e2a;
+}
+
+.connect4-cell.yellow {
+  background: linear-gradient(135deg, #ffc107 0%, #e0a800 100%);
+  box-shadow: 0 2px 8px rgba(255, 193, 7, 0.4);
+  border-color: #b8860b;
+}
+
+.connect4-cell.dropping {
+  animation: drop 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+@keyframes drop {
+  0% {
+    transform: translateY(-100px);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+/* Enhanced Gomoku Board */
+#gomokuBoard {
+  display: grid;
+  grid-template-columns: repeat(15, 1fr);
+  gap: clamp(1px, 0.2vw, 2px);
+  width: min(95vw, 500px);
+  aspect-ratio: 1;
+  background: linear-gradient(135deg, #d3a15c 0%, #8b5a2b 100%);
+  padding: clamp(6px, 1.5vw, 10px);
+  border-radius: 12px;
+  border: 3px solid #8b5a2b;
+  margin: 15px auto;
+  box-shadow: 0 8px 32px var(--shadow-heavy);
+  /* Prevent overflow */
+  max-width: calc(100vw - 20px);
+  overflow: hidden;
+}
+
+.gomoku-cell {
+  background: #f5f5dc;
+  border: 1px solid #8b5a2b;
+  cursor: pointer;
+  aspect-ratio: 1;
+  position: relative;
+  transition: all 0.2s ease;
+  /* Prevent text selection */
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  /* Prevent zoom on double tap */
+  touch-action: manipulation;
+}
+
+.gomoku-cell:hover {
+  background: #e6e6d3;
+  transform: scale(1.05);
+}
+
+.gomoku-stone {
+  border-radius: 50%;
+  position: absolute;
+  width: 85%;
+  height: 85%;
+  top: 7.5%;
+  left: 7.5%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: clamp(0.4em, 1vw, 0.7em);
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 8px var(--shadow-heavy);
+  /* Prevent text selection */
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+}
+
+.black-stone {
+  background: linear-gradient(135deg, #000 0%, #333 100%);
+  color: #fff;
+  border: 2px solid #444;
+}
+
+.white-stone {
+  background: linear-gradient(135deg, #fff 0%, #f0f0f0 100%);
+  color: #000;
+  border: 2px solid #ccc;
+}
+
+/* Chess Board Styling */
+#chess-container {
+  display: flex;
+  justify-content: center;
+  margin: 15px auto;
+  max-width: min(95vw, 500px);
+  /* Prevent overflow */
+  overflow: hidden;
+}
+
+#chessBoard {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  grid-template-rows: repeat(8, 1fr);
+  width: min(95vw, 400px);
+  height: min(95vw, 400px);
+  margin: 15px auto;
+  border: 3px solid var(--chess-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px var(--shadow-heavy);
+  /* Prevent overflow */
+  max-width: calc(100vw - 20px);
+  overflow: hidden;
+}
+
+.chess-square {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(1.5em, 4vw, 2.5em);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+  position: relative;
+  /* Prevent zoom on double tap */
+  touch-action: manipulation;
+}
+
+.chess-square.light {
+  background-color: var(--chess-light-square);
+}
+
+.chess-square.dark {
+  background-color: var(--chess-dark-square);
+}
+
+.chess-square.selected {
+  background-color: var(--chess-selected) !important;
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.5);
+}
+
+.chess-square.possible-move {
+  background-color: var(--chess-possible) !important;
+}
+
+.chess-square.last-move {
+  background-color: #ffeb3b !important;
+}
+
+.chess-square:hover {
+  opacity: 0.8;
+  transform: scale(1.05);
+}
+
+.chess-square.in-check {
+  background-color: var(--chess-check) !important;
+  animation: checkPulse 1s infinite;
+}
+
+@keyframes checkPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.chess-piece {
+  font-size: inherit;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.white-piece {
+  color: var(--chess-white-piece);
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+.black-piece {
+  color: var(--chess-black-piece);
+  text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.3);
+}
+
+/* Chess notation */
+.chess-notation {
+  position: absolute;
+  font-size: 0.6em;
+  font-weight: bold;
+  color: var(--chess-notation);
+}
+
+.file-notation {
+  bottom: 2px;
+  right: 2px;
+}
+
+.rank-notation {
+  top: 2px;
+  left: 2px;
+}
+
+/* Dots/Ludo Game Styles */
+#main {
+  margin-top: 2%;
+  display: flex;
+  flex-direction: row;
+  justify-content: space-evenly;
+  align-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 20px;
+  /* Prevent overflow */
+  max-width: calc(100vw - 20px);
+  overflow-x: hidden;
+}
+
+#board {
+  border: 5px solid var(--dots-border);
+  width: min(90vw, 650px);
+  height: min(90vw, 650px);
+  flex-direction: column;
+  background: var(--bg-tertiary);
+  /* Prevent overflow */
+  max-width: calc(100vw - 40px);
+  overflow: hidden;
+}
+
+#row1, #row2, #row3 {
+  display: flex;
+  width: 100%;
+}
+
+#row1, #row3 {
+  height: 40%;
+}
+
+#row2 {
+  height: 20%;
+}
+
+#green {
+  width: 40%;
+  background-color: var(--dots-green-bg);
+  padding: 20px;
+}
+
+#yellow {
+  width: 40%;
+  background-color: var(--dots-yellow-bg);
+  padding: 20px;
+}
+
+#red {
+  width: 40%;
+  background-color: var(--dots-red-bg);
+  padding: 20px;
+}
+
+#blue {
+  width: 40%;
+  background-color: var(--dots-blue-bg);
+  padding: 20px;
+}
+
+.inner {
+  border-radius: 20px;
+  background-color: var(--dots-inner-bg);
+  height: 100%;
+  width: 100%;
+  display: flex;
+  justify-content: space-evenly;
+  flex-direction: column;
+}
+
+#upper, #lower {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  height: 100%;
+  padding: 5%;
+}
+
+.g_green, .g_yellow, .g_red, .g_blue {
+  display: flex;
+  justify-content: center;
+  border-radius: 10%;
+  width: 100%;
+  height: 100%;
+  margin-right: 10%;
+  box-shadow: 3px 3px 3px 3px var(--dots-box-shadow);
+}
+
+.g_green {
+  background-color: var(--dots-green-bg);
+}
+
+.g_yellow {
+  background-color: var(--dots-yellow-bg);
+}
+
+.g_red {
+  background-color: var(--dots-red-bg);
+}
+
+.g_blue {
+  background-color: var(--dots-blue-bg);
+}
+
+#yellow_move, #red_move {
+  display: grid;
+  width: 20%;
+  height: 100%;
+  grid-template-columns: 33% 33% 33%;
+}
+
+#green_move, #blue_move {
+  display: grid;
+  width: 40%;
+  height: 100%;
+  grid-template-rows: 33% 33% 33%;
+  grid-template-columns: 16.5% 16.5% 16.5% 16.5% 16.5% 16.5%;
+}
+
+.box {
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--dots-border);
+  background-color: var(--bg-tertiary);
+}
+
+.box-y {
+  background-color: var(--dots-yellow-bg);
+}
+
+.box-g {
+  background-color: var(--dots-green-bg);
+}
+
+.box-b {
+  background-color: var(--dots-blue-bg);
+}
+
+.box-r {
+  background-color: var(--dots-red-bg);
+}
+
+#multicolor {
+  width: 20%;
+  height: 100%;
+  box-shadow: var(--dots-multicolor-shadow);
+}
+
+#dice {
+  display: inline-block;
+  margin: 20px;
+}
+
+#die {
+  padding: 50px;
+  background-image: url("assets/1.png");
+  background-color: rgba(0, 0, 255, 0);
+  background-size: contain;
+  border: 5px solid var(--dots-border);
+  border-radius: 5px;
+  cursor: pointer;
+  /* Prevent zoom on double tap */
+  touch-action: manipulation;
+}
+
+#message {
+  font-size: 35px;
+  text-align: center;
+  color: var(--text-light);
+  margin: 20px 0;
+  text-shadow: 2px 2px 4px var(--shadow-medium);
+}
+
+#out {
+  min-width: 100px;
+  min-height: 100px;
+  border: 2px solid var(--dots-border);
+  background-color: var(--bg-tertiary);
+  border-radius: 10px;
+}
+
+/* Token styles */
+#b1, #b2, #b3, #b4 {
+  background-image: var(--token-blue);
+  border: 1px solid var(--dots-border);
+  box-shadow: 3px 3px 5px var(--dots-box-shadow);
+  border-radius: 50%;
+  width: 90%;
+  height: 90%;
+  margin: auto;
+  cursor: pointer;
+  /* Prevent zoom on double tap */
+  touch-action: manipulation;
+}
+
+#g1, #g2, #g3, #g4 {
+  background-image: var(--token-green);
+  border: 1px solid var(--dots-border);
+  box-shadow: 3px 3px 5px var(--dots-box-shadow);
+  border-radius: 50%;
+  width: 90%;
+  height: 90%;
+  margin: auto;
+  z-index: 1;
+  cursor: pointer;
+  /* Prevent zoom on double tap */
+  touch-action: manipulation;
+}
+
+#y1, #y2, #y3, #y4 {
+  background-image: var(--token-yellow);
+  border: 1px solid var(--dots-border);
+  box-shadow: 3px 3px 5px var(--dots-box-shadow);
+  border-radius: 50%;
+  width: 90%;
+  height: 90%;
+  margin: auto;
+  z-index: 1;
+  cursor: pointer;
+  /* Prevent zoom on double tap */
+  touch-action: manipulation;
+}
+
+#r1, #r2, #r3, #r4 {
+  background-image: var(--token-red);
+  border: 1px solid var(--dots-border);
+  box-shadow: 3px 3px 5px var(--dots-box-shadow);
+  border-radius: 50%;
+  width: 90%;
+  height: 90%;
+  margin: auto;
+  z-index: 1;
+  cursor: pointer;
+  /* Prevent zoom on double tap */
+  touch-action: manipulation;
+}
+
+/* Z-index for tokens */
+#r1, #b1, #g1, #y1 { z-index: 1; }
+#r2, #b2, #g2, #y2 { z-index: 2; }
+#r3, #b3, #g3, #y3 { z-index: 3; }
+#r4, #b4, #g4, #y4 { z-index: 4; }
+
+/* Reaction Speed Game */
+#reactionBoard { 
+  display: grid; 
+  grid-template-columns: repeat(5, 1fr); 
+  gap: clamp(4px, 1vw, 8px); 
+  width: min(90vw, 300px);
+  margin: 15px auto;
+  background: var(--bg-secondary);
+  padding: clamp(8px, 2vw, 15px);
+  border-radius: 15px;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 32px var(--shadow-medium);
+  /* Prevent overflow */
+  max-width: calc(100vw - 20px);
+  overflow: hidden;
+}
+
+.reaction-cell {
+  aspect-ratio: 1;
+  background: var(--cell-bg);
+  display: flex;
+  align-items: center; 
+  justify-content: center; 
+  cursor: pointer;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+  border: 2px solid var(--border-color);
+  box-shadow: 0 2px 8px var(--shadow-light);
+  min-height: 40px;
+  /* Prevent text selection */
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  /* Prevent zoom on double tap */
+  touch-action: manipulation;
+}
+
+.reaction-cell:hover {
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px var(--shadow-medium);
+}
+
+.active { 
+  background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+  border-color: #1e7e34;
+  animation: pulse 0.5s infinite;
+  box-shadow: 0 0 20px rgba(40, 167, 69, 0.6);
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+
+/* Enhanced Status and Info Displays */
+.status-display {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  padding: clamp(10px, 2vw, 15px) clamp(15px, 3vw, 25px);
+  margin: 10px auto;
+  max-width: min(95vw, 500px);
+  border-radius: 12px;
+  font-size: clamp(0.9em, 2vw, 1.1em);
+  font-weight: 600;
+  box-shadow: 0 4px 12px var(--shadow-light);
+  border-left: 5px solid #667eea;
+  word-wrap: break-word;
+  /* Prevent overflow */
+  overflow-wrap: break-word;
+  hyphens: auto;
+}
+
+/* Connection status specific styles */
+.connection-error {
+  background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+  color: white;
+  border-left-color: #a71e2a;
+}
+
+.connection-connecting {
+  background: linear-gradient(135deg, #ffc107 0%, #e0a800 100%);
+  color: #333;
+  border-left-color: #d39e00;
+  animation: connectionPulse 2s infinite;
+}
+
+.connection-success {
+  background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+  color: white;
+  border-left-color: #1e7e34;
+}
+
+.connection-polling {
+  background: linear-gradient(135deg, #fd7e14 0%, #e55a00 100%);
+  color: white;
+  border-left-color: #dc5200;
+}
+
+@keyframes connectionPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.timer-display {
+  background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+  color: white;
+  padding: clamp(8px, 1.5vw, 10px) clamp(12px, 2.5vw, 20px);
+  margin: 10px auto;
+  max-width: min(90vw, 300px);
+  border-radius: 25px;
+  font-size: clamp(1em, 2.5vw, 1.2em);
+  font-weight: bold;
+  box-shadow: 0 4px 12px rgba(255, 107, 107, 0.3);
+  animation: timerPulse 1s infinite;
+  /* Prevent overflow */
+  overflow-wrap: break-word;
+}
+
+@keyframes timerPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.8; }
+}
+
+/* Enhanced Modal Styles */
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(5px);
+  padding: 20px;
+  /* Fix scroll issues in modal */
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.modal-content {
+  background: var(--modal-bg);
+  color: var(--text-primary);
+  padding: clamp(20px, 5vw, 40px);
+  border-radius: 20px;
+  text-align: center;
+  max-width: min(90vw, 400px);
+  width: 100%;
+  box-shadow: 0 20px 60px var(--shadow-heavy);
+  animation: modalSlideIn 0.3s ease-out;
+  /* Prevent overflow */
+  max-height: 80vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@keyframes modalSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-50px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.modal h2 {
+  color: inherit;
+  margin-bottom: 15px;
+  font-size: clamp(1.2em, 3vw, 2em);
+}
+
+.modal p {
+  color: inherit;
+  margin-bottom: 20px;
+  font-size: clamp(0.9em, 2vw, 1.1em);
+  line-height: 1.5;
+}
+
+.win-modal {
+  background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+  color: white;
+}
+
+.win-modal h2, .win-modal p {
+  color: white;
+}
+
+.lose-modal {
+  background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+  color: white;
+}
+
+.lose-modal h2, .lose-modal p {
+  color: white;
+}
+
+.draw-modal {
+  background: linear-gradient(135deg, #ffc107 0%, #e0a800 100%);
+  color: #333;
+}
+
+/* Celebration Animation */
+.celebration {
+  animation: celebrate 2s ease-in-out;
+}
+
+@keyframes celebrate {
+  0%, 100% { transform: scale(1) rotate(0deg); }
+  25% { transform: scale(1.1) rotate(-5deg); }
+  50% { transform: scale(1.2) rotate(5deg); }
+  75% { transform: scale(1.1) rotate(-2deg); }
+}
+
+/* Game-specific responsive styles */
+#reactionScore {
+  font-size: clamp(1em, 2.5vw, 1.3em);
+  margin: 15px auto;
+  font-weight: bold;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  padding: clamp(10px, 2vw, 15px);
+  border-radius: 12px;
+  box-shadow: 0 4px 12px var(--shadow-light);
+  max-width: min(90vw, 400px);
+  /* Prevent overflow */
+  overflow-wrap: break-word;
+}
+
+#startGame {
+  padding: clamp(10px, 2vw, 15px) clamp(20px, 4vw, 30px);
+  font-size: clamp(1em, 2.5vw, 1.2em);
+  background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+  color: white;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  margin: 15px;
+  box-shadow: 0 4px 12px rgba(40, 167, 69, 0.3);
+  transition: all 0.3s ease;
+  text-transform: uppercase;
+  font-weight: bold;
+  letter-spacing: 1px;
+  min-height: 50px;
+  /* Prevent text selection */
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  /* Prevent zoom on double tap */
+  touch-action: manipulation;
+}
+
+#startGame:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(40, 167, 69, 0.4);
+}
+
+#startGame:disabled {
+  background: linear-gradient(135deg, #6c757d 0%, #5a6268 100%);
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Leaderboard responsive styles */
+#leaderboard {
+  margin: 20px auto;
+  padding: clamp(15px, 3vw, 20px);
+  border: none;
+  max-width: min(95vw, 700px);
+  background: var(--leaderboard-bg);
+  color: var(--text-primary);
+  border-radius: 15px;
+  box-shadow: 0 8px 32px var(--shadow-medium);
+  backdrop-filter: blur(10px);
+  overflow-x: auto;
+  /* Prevent horizontal scroll issues */
+  -webkit-overflow-scrolling: touch;
+}
+
+#leaderboard h2 {
+  color: var(--text-primary);
+  margin-bottom: 15px;
+  text-align: center;
+  font-size: clamp(1.2em, 3vw, 1.8em);
+}
+
+#leaderboard table {
+  width: 100%;
+  border-collapse: collapse;
+  border-radius: 8px;
+  overflow: hidden;
+  min-width: 300px;
+}
+
+#leaderboard th, #leaderboard td {
+  padding: clamp(8px, 1.5vw, 12px);
+  text-align: center;
+  border-bottom: 1px solid var(--border-color);
+  font-size: clamp(0.8em, 1.5vw, 1em);
+  /* Prevent overflow */
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+#leaderboard th {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+#leaderboard tr:nth-child(even) {
+  background: var(--table-stripe);
+}
+
+#leaderboard tr:hover {
+  background: var(--table-hover);
+}
+
+/* Pagination styles */
+#pagination {
+  margin-top: 15px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+#pagination button {
+  padding: 8px 16px;
+  font-size: 0.9em;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  /* Prevent text selection */
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  /* Prevent zoom on double tap */
+  touch-action: manipulation;
+}
+
+#pagination button:hover {
+  background: linear-gradient(135deg, #5a67d8 0%, #6b46c1 100%);
+  transform: translateY(-1px);
+}
+
+#pagination span {
+  color: var(--text-primary);
+  font-weight: bold;
+  font-size: 0.9em;
+}
+
+/* Instruction boxes - FIXED CONTRAST ISSUE */
+.instruction-box {
+  background: var(--instruction-bg);
+  color: var(--instruction-text);
+  padding: 15px 20px;
+  border-radius: 12px;
+  border: 2px solid var(--instruction-border);
+  margin: 20px auto;
+  max-width: min(90vw, 500px);
+  text-align: left;
+  box-shadow: 0 4px 12px var(--shadow-light);
+}
+
+.instruction-box h3 {
+  color: var(--instruction-text);
+  margin-bottom: 10px;
+  font-weight: 700;
+}
+
+.instruction-box p {
+  color: var(--instruction-text);
+  margin: 6px 0;
+  line-height: 1.5;
+}
+
+
+/* Ultra-small screen optimizations */
+@media (max-width: 320px) {
+  body {
+    padding: 5px;
+  }
+  
+  h1 {
+    font-size: 1.3em;
+    margin-bottom: 10px;
+  }
+  
+  button {
+    padding: 8px 12px;
+    font-size: 0.8em;
+    margin: 3px;
+  }
+  
+  .grid {
+    gap: 2px;
+    padding: 6px;
+  }
+  
+  .cell {
+    font-size: 1.2em;
+    min-height: 40px;
+  }
+  
+  #connect4Board {
+    gap: 2px;
+    padding: 6px;
+  }
+  
+  .connect4-cell {
+    border-width: 1px;
+  }
+  
+  #gomokuBoard {
+    gap: 1px;
+    padding: 4px;
+  }
+  
+  .gomoku-stone {
+    font-size: 0.3em;
+  }
+  
+  .status-display, .timer-display {
+    padding: 8px 12px;
+    font-size: 0.85em;
+  }
+  
+  .modal-content {
+    padding: 15px;
+  }
+  
+  .modal h2 {
+    font-size: 1.1em;
+  }
+  
+  .modal p {
+    font-size: 0.85em;
+  }
+  
+  #board {
+    width: min(95vw, 300px);
+    height: min(95vw, 300px);
+  }
+  
+  #main {
+    flex-direction: column;
+    gap: 10px;
+  }
+  
+  #dice {
+    margin: 10px;
+  }
+  
+  #die {
+    padding: 30px;
+  }
+  
+  #message {
+    font-size: 24px;
+  }
+}
+
+/* Landscape phone optimizations */
+@media (max-height: 500px) and (orientation: landscape) {
+  body {
+    padding: 5px;
+    /* Allow scrolling in landscape */
+    overflow-y: auto;
+    height: auto;
+    min-height: 100vh;
+  }
+  
+  h1 {
+    font-size: 1.2em;
+    margin-bottom: 5px;
+  }
+  
+  .status-display, .timer-display {
+    margin: 5px auto;
+    padding: 6px 12px;
+  }
+  
+  .grid, #connect4Board, #gomokuBoard, #reactionBoard, #chess-container {
+    margin: 8px auto;
+  }
+  
+  .instruction-box {
+    margin: 8px auto;
+    padding: 10px;
+  }
+  
+  button {
+    margin: 3px;
+    padding: 6px 12px;
+  }
+  
+  /* Ensure modal fits in landscape */
+  .modal-content {
+    max-height: 90vh;
+    padding: 15px;
+  }
+  
+  #board {
+    width: min(70vh, 400px);
+    height: min(70vh, 400px);
+  }
+  
+  #main {
+    flex-direction: row;
+    justify-content: center;
+    align-items: flex-start;
+  }
+}
+
+/* High DPI displays */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+  .cell, .connect4-cell, .gomoku-cell, .reaction-cell {
+    border-width: 1px;
+  }
+  
+  .gomoku-stone {
+    border-width: 1px;
+  }
+}
+
+/* iOS Safari specific fixes */
+@supports (-webkit-touch-callout: none) {
+  body {
+    /* Fix for iOS Safari viewport height issues */
+    min-height: -webkit-fill-available;
+    height: auto;
+  }
+  
+  .modal {
+    /* Fix for iOS Safari modal positioning */
+    height: -webkit-fill-available;
+  }
+}
+
+/* Prevent text selection on game elements */
+.grid, #connect4Board, #gomokuBoard, #reactionBoard, #chessBoard, #board {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  -khtml-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+/* Accessibility improvements */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  
+  .celebration, .pulse, .drop, .timerPulse, .checkPulse {
+    animation: none !important;
+  }
+}
+
+/* Focus styles for accessibility */
+button:focus-visible,
+.cell:focus-visible,
+.connect4-cell:focus-visible,
+.gomoku-cell:focus-visible,
+.reaction-cell:focus-visible,
+.chess-square:focus-visible {
+  outline: 3px solid #667eea;
+  outline-offset: 2px;
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  :root {
+    --border-color: #000;
+    --shadow-light: rgba(0, 0, 0, 0.8);
+    --shadow-medium: rgba(0, 0, 0, 0.9);
+    --shadow-heavy: rgba(0, 0, 0, 1);
+  }
+  
+  .cell, .connect4-cell, .gomoku-cell, .reaction-cell {
+    border-width: 3px;
+  }
+}
+
+/* Tablet optimizations */
+@media (min-width: 768px) and (max-width: 1024px) {
+  #board {
+    width: min(60vw, 500px);
+    height: min(60vw, 500px);
+  }
+  
+  #main {
+    justify-content: space-around;
+  }
+}
+
+/* Desktop optimizations */
+@media (min-width: 1025px) {
+  body {
+    padding: 20px;
+  }
+  
+  #board {
+    width: min(50vw, 650px);
+    height: min(50vw, 650px);
+  }
+}
+
+/* Prevent zoom and scroll issues on all interactive elements */
+button, .cell, .connect4-cell, .gomoku-cell, .reaction-cell, .chess-square,
+#die, #r1, #r2, #r3, #r4, #g1, #g2, #g3, #g4, #y1, #y2, #y3, #y4, #b1, #b2, #b3, #b4 {
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+/* Ensure proper scrolling behavior for all containers */
+#gameScreen, #gameMenu, #gameContainer, #chess-container, #main {
+  /* Allow natural content flow */
+  height: auto;
+  min-height: auto;
+  overflow: visible;
+}
+
+/* Fix any remaining scroll trap issues */
+html, body {
+  /* Ensure proper scrolling */
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Prevent horizontal overflow on all game elements */
+#board, #chessBoard, #gomokuBoard, #connect4Board, #reactionBoard,
+.grid, .modal, .modal-content, .status-display, .timer-display, .instruction-box, #leaderboard {
+  max-width: calc(100vw - 20px);
+  overflow-x: hidden;
+}

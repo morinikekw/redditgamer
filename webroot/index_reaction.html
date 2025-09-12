@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>3D Multiplayer Reaction Speed</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="game-ui-overlay">
+    <h1>🎮 3D Multiplayer Reaction Speed</h1>
+    
+    <div id="players-info" class="status-display-3d">🔄 Connecting...</div>
+    
+    <div class="instruction-box">
+      <h3>⚡ How to Play:</h3>
+      <p>Click the highlighted green cube as fast as possible for 20 seconds.</p>
+      <p>Your final score will be ranked on a live leaderboard with other Reddit users!</p>
+      <p><b>🏎️ Fun Fact:</b> F1 drivers have reaction times below 300ms!</p>
+    </div>
+    
+    <button id="startGame">🚀 Start Game</button>
+    <div id="reactionScore">Click "Start Game" to begin!</div>
+  </div>
+  
+  <div style="position: relative;">
+    <canvas id="gameCanvas" class="threejs-canvas"></canvas>
+    <div id="loading" class="threejs-loading">
+      <div class="loading-spinner"></div>
+      Loading 3D Scene...
+    </div>
+  </div>
+  
+  <div class="game-ui-overlay">
+    <div id="leaderboard">
+      <h2>🏆 Live Leaderboard</h2>
+      <table>
+        <tr>
+          <th>🏅 Rank</th>
+          <th>👤 Player</th>
+          <th>🎯 Score</th>
+          <th>⚡ Avg Time</th>
+          <th>📊 Median Time</th>
+        </tr>
+      </table>
+      <div id="pagination" style="text-align: center; margin-top: 10px;"></div>
+    </div>
+  </div>
+  
+  <script src="./vendor/three.min.js"></script>
+  <script src="script_reaction.js"></script>
+</body>
+</html>
