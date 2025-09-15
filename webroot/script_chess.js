@@ -1,880 +1,705 @@
-(function() {
-  // Send webViewReady immediately when script loads
+(async function () {
+  // --- transport helper ---
   function sendMessage(message) {
-    window.parent.postMessage(message, '*');
+    try { window.parent.postMessage(message, '*'); }
+    catch (e) { console.warn('postMessage failed', e); }
   }
-  
-  // Notify parent immediately that web view is ready
   sendMessage({ type: 'webViewReady' });
 
-  // DOM elements
+  // --- DOM refs ---
   const canvas = document.getElementById('gameCanvas');
   const statusElem = document.getElementById('chessStatus');
   const restartBtn = document.getElementById('restartChess');
   const playersElem = document.getElementById('players-info');
   const timerElem = document.getElementById('timer');
   const loadingElem = document.getElementById('loading');
+  const errorBanner = document.getElementById('errorBanner');
 
-  // Game state
+  // --- state ---
   let gameState = null;
   let currentUsername = null;
   let gameActive = false;
-  let refreshInterval = null;
-  let timerInterval = null;
 
-  // Three.js variables
+  // --- three.js pieces ---
   let scene, camera, renderer, raycaster, mouse;
-  let boardSquares = [];
+  let boardSquares = [], squareMap = {};
   let chessPieces = [];
   let selectedPiece = null;
-  let possibleMoves = [];
   let isSceneReady = false;
 
-  // Camera control variables
-  let isDragging = false;
-  let previousMousePosition = { x: 0, y: 0 };
+  // camera
   let cameraDistance = 15;
-  let cameraTheta = Math.PI / 4; // azimuth angle
-  let cameraPhi = Math.PI / 3;   // polar angle
-
-  // Chess piece models (simplified 3D representations)
-  const pieceModels = {};
-
-  // Initialize Three.js scene
-  function initThreeJS() {
-    // Scene setup
-    scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x1a1a1a);
-
-    // Camera setup
-    camera = new THREE.PerspectiveCamera(75, canvas.clientWidth / canvas.clientHeight, 0.1, 1000);
-    updateCameraPosition();
-
-    // Renderer setup
-    renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
-    renderer.setSize(canvas.clientWidth, canvas.clientHeight);
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-
-    // Lighting
-    const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
-    scene.add(ambientLight);
-
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    directionalLight.position.set(5, 10, 7);
-    directionalLight.castShadow = true;
-    directionalLight.shadow.mapSize.width = 2048;
-    directionalLight.shadow.mapSize.height = 2048;
-    scene.add(directionalLight);
-
-    // Add a subtle fill light from the opposite side
-    const fillLight = new THREE.DirectionalLight(0x7777ff, 0.3);
-    fillLight.position.set(-5, 5, -5);
-    scene.add(fillLight);
-
-    // Raycaster for mouse interaction
-    raycaster = new THREE.Raycaster();
-    mouse = new THREE.Vector2();
-
-    // Create piece models
-    createPieceModels();
-
-    // Create the game board
-    createBoard();
-
-    // Add a subtle grid floor for better depth perception
-    const gridHelper = new THREE.GridHelper(20, 20, 0x000000, 0x000000);
-    gridHelper.position.y = -0.5;
-    gridHelper.material.opacity = 0.2;
-    gridHelper.material.transparent = true;
-    scene.add(gridHelper);
-
-    // Event listeners
-    canvas.addEventListener('mousedown', onMouseDown, false);
-    canvas.addEventListener('mousemove', onMouseMove, false);
-    canvas.addEventListener('mouseup', onMouseUp, false);
-    canvas.addEventListener('wheel', onMouseWheel, false);
-    canvas.addEventListener('click', onCanvasClick);
-    canvas.addEventListener('touchstart', onTouchStart, { passive: false });
-    canvas.addEventListener('touchmove', onTouchMove, { passive: false });
-    canvas.addEventListener('touchend', onTouchEnd, false);
-    window.addEventListener('resize', onWindowResize);
-
-    // Start render loop
-    animate();
-
-    // Hide loading indicator
-    loadingElem.style.display = 'none';
-    isSceneReady = true;
-  }
-
-  // Update camera position based on spherical coordinates
+  let cameraTheta = Math.PI / 4;
+  let cameraPhi = Math.PI / 3;
   function updateCameraPosition() {
+    if (!camera) return;
     const x = cameraDistance * Math.sin(cameraPhi) * Math.cos(cameraTheta);
     const z = cameraDistance * Math.sin(cameraPhi) * Math.sin(cameraTheta);
     const y = cameraDistance * Math.cos(cameraPhi);
-    
     camera.position.set(x, y, z);
     camera.lookAt(0, 0, 0);
   }
 
-  // Mouse event handlers for camera control
-  function onMouseDown(event) {
-    isDragging = true;
-    previousMousePosition = {
-      x: event.clientX,
-      y: event.clientY
-    };
+  // optional chess.js local engine for move hints & validation
+  let ChessCtor = (typeof window !== 'undefined' && window.Chess) ? window.Chess : null;
+  let clientChess = null;
+
+  // constants & helpers
+  const DEFAULT_STARTING_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+  const files = 'abcdefgh';
+  const ranks = '87654321';
+  function notationToCoords(square) {
+    if (!square || square.length < 2) return null;
+    const col = files.indexOf(square[0]);
+    const row = ranks.indexOf(square[1]);
+    if (col < 0 || row < 0) return null;
+    return { row, col };
+  }
+  function coordsToNotation(row, col) {
+    if (row < 0 || row > 7 || col < 0 || col > 7) return null;
+    return files[col] + ranks[row];
+  }
+  function coordsToPosition(row, col) {
+    return new THREE.Vector3(col - 3.5, 0, row - 3.5);
   }
 
-  function onMouseMove(event) {
-    if (!isDragging) return;
-    
-    const deltaX = event.clientX - previousMousePosition.x;
-    const deltaY = event.clientY - previousMousePosition.y;
-    
-    previousMousePosition = {
-      x: event.clientX,
-      y: event.clientY
-    };
-    
-    // Adjust rotation speed
-    cameraTheta += deltaX * 0.01;
-    cameraPhi += deltaY * 0.01;
-    
-    // Constrain phi to avoid flipping
-    cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi));
-    
-    updateCameraPosition();
-  }
-
-  function onMouseUp() {
-    isDragging = false;
-  }
-
-  function onMouseWheel(event) {
-    event.preventDefault();
-    
-    // Adjust zoom speed
-    cameraDistance += event.deltaY * 0.01;
-    
-    // Constrain zoom distance
-    cameraDistance = Math.max(8, Math.min(25, cameraDistance));
-    
-    updateCameraPosition();
-  }
-
-  // Touch event handlers for mobile
-  function onTouchStart(event) {
-    if (event.touches.length === 1) {
-      isDragging = true;
-      previousMousePosition = {
-        x: event.touches[0].clientX,
-        y: event.touches[0].clientY
-      };
-    }
-    event.preventDefault();
-  }
-
-  function onTouchMove(event) {
-    if (!isDragging || event.touches.length !== 1) return;
-    
-    const deltaX = event.touches[0].clientX - previousMousePosition.x;
-    const deltaY = event.touches[0].clientY - previousMousePosition.y;
-    
-    previousMousePosition = {
-      x: event.touches[0].clientX,
-      y: event.touches[0].clientY
-    };
-    
-    cameraTheta += deltaX * 0.01;
-    cameraPhi += deltaY * 0.01;
-    
-    // Constrain phi to avoid flipping
-    cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi));
-    
-    updateCameraPosition();
-    event.preventDefault();
-  }
-
-  function onTouchEnd() {
-    isDragging = false;
-  }
-
-  // Create simplified 3D models for chess pieces with improved visuals
+  // --- piece models (compact & readable) ---
+  const pieceModels = {};
   function createPieceModels() {
-    const whiteMaterial = new THREE.MeshStandardMaterial({ 
-      color: 0xf5f5f5,
-      roughness: 0.7,
-      metalness: 0.2
-    });
-    
-    const blackMaterial = new THREE.MeshStandardMaterial({ 
-      color: 0x222222,
-      roughness: 0.8,
-      metalness: 0.3
-    });
+    const whiteMat = new THREE.MeshStandardMaterial({ color: 0xf5f5f5, roughness: 0.35, metalness: 0.08 });
+    const blackMat = new THREE.MeshStandardMaterial({ color: 0x101214, roughness: 0.12, metalness: 0.6 });
 
-    // Pawn
     pieceModels.pawn = (color) => {
-      const group = new THREE.Group();
-      const bodyGeometry = new THREE.CylinderGeometry(0.2, 0.3, 0.6, 16);
-      const headGeometry = new THREE.SphereGeometry(0.25, 16, 12);
-      const material = color === 'white' ? whiteMaterial : blackMaterial;
-      
-      const body = new THREE.Mesh(bodyGeometry, material);
-      const head = new THREE.Mesh(headGeometry, material);
-      head.position.y = 0.5;
-      
-      body.castShadow = true;
-      head.castShadow = true;
-      
-      group.add(body);
-      group.add(head);
-      return group;
+      const mat = color === 'white' ? whiteMat.clone() : blackMat.clone();
+      const g = new THREE.Group();
+      g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.3, 0.55, 16), mat));
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 12, 8), mat);
+      head.position.y = 0.5; g.add(head);
+      return g;
     };
-
-    // Rook
     pieceModels.rook = (color) => {
-      const group = new THREE.Group();
-      const baseGeometry = new THREE.CylinderGeometry(0.3, 0.35, 0.8, 16);
-      const topGeometry = new THREE.CylinderGeometry(0.25, 0.3, 0.2, 16);
-      const material = color === 'white' ? whiteMaterial : blackMaterial;
-      
-      const base = new THREE.Mesh(baseGeometry, material);
-      const top = new THREE.Mesh(topGeometry, material);
-      top.position.y = 0.5;
-      
-      base.castShadow = true;
-      top.castShadow = true;
-      
-      group.add(base);
-      group.add(top);
-      return group;
+      const mat = color === 'white' ? whiteMat.clone() : blackMat.clone();
+      const g = new THREE.Group();
+      g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.33, 0.8, 16), mat));
+      const top = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.18, 0.36), mat);
+      top.position.y = 0.5; g.add(top);
+      return g;
     };
-
-    // Knight
     pieceModels.knight = (color) => {
-      const group = new THREE.Group();
-      const bodyGeometry = new THREE.CylinderGeometry(0.25, 0.3, 0.7, 16);
-      const headGeometry = new THREE.ConeGeometry(0.25, 0.5, 16);
-      const material = color === 'white' ? whiteMaterial : blackMaterial;
-      
-      const body = new THREE.Mesh(bodyGeometry, material);
-      const head = new THREE.Mesh(headGeometry, material);
-      head.position.y = 0.6;
-      head.rotation.x = Math.PI;
-      
-      body.castShadow = true;
-      head.castShadow = true;
-      
-      group.add(body);
-      group.add(head);
-      return group;
+      const mat = color === 'white' ? whiteMat.clone() : blackMat.clone();
+      const g = new THREE.Group();
+      g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.3, 0.65, 16), mat));
+      const head = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.45, 12), mat);
+      head.position.y = 0.55; head.rotation.x = Math.PI; head.rotation.z = 0.5; g.add(head);
+      return g;
     };
-
-    // Bishop
     pieceModels.bishop = (color) => {
-      const group = new THREE.Group();
-      const bodyGeometry = new THREE.CylinderGeometry(0.2, 0.3, 0.8, 16);
-      const topGeometry = new THREE.ConeGeometry(0.15, 0.4, 16);
-      const material = color === 'white' ? whiteMaterial : blackMaterial;
-      
-      const body = new THREE.Mesh(bodyGeometry, material);
-      const top = new THREE.Mesh(topGeometry, material);
-      top.position.y = 0.6;
-      
-      body.castShadow = true;
-      top.castShadow = true;
-      
-      group.add(body);
-      group.add(top);
-      return group;
+      const mat = color === 'white' ? whiteMat.clone() : blackMat.clone();
+      const g = new THREE.Group();
+      g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.3, 0.9, 16), mat));
+      const top = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.45, 12), mat);
+      top.position.y = 0.55; g.add(top);
+      return g;
     };
-
-    // Queen
     pieceModels.queen = (color) => {
-      const group = new THREE.Group();
-      const bodyGeometry = new THREE.CylinderGeometry(0.25, 0.35, 0.9, 16);
-      const crownGeometry = new THREE.SphereGeometry(0.3, 16, 16);
-      const material = color === 'white' ? whiteMaterial : blackMaterial;
-      
-      const body = new THREE.Mesh(bodyGeometry, material);
-      const crown = new THREE.Mesh(crownGeometry, material);
-      crown.position.y = 0.7;
-      crown.scale.set(1, 0.7, 1);
-      
-      body.castShadow = true;
-      crown.castShadow = true;
-      
-      group.add(body);
-      group.add(crown);
-      return group;
+      const mat = color === 'white' ? whiteMat.clone() : blackMat.clone();
+      const g = new THREE.Group();
+      g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.34, 0.9, 16), mat));
+      const crown = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.06, 8, 32), mat); crown.position.y = 0.78; g.add(crown);
+      return g;
     };
-
-    // King
     pieceModels.king = (color) => {
-      const group = new THREE.Group();
-      const bodyGeometry = new THREE.CylinderGeometry(0.3, 0.4, 1.0, 16);
-      const crossGeometry = new THREE.CylinderGeometry(0.05, 0.05, 0.3, 8);
-      const material = color === 'white' ? whiteMaterial : blackMaterial;
-      
-      const body = new THREE.Mesh(bodyGeometry, material);
-      const cross = new THREE.Mesh(crossGeometry, material);
-      cross.position.y = 0.8;
-      cross.rotation.z = Math.PI / 4;
-      
-      body.castShadow = true;
-      cross.castShadow = true;
-      
-      group.add(body);
-      group.add(cross);
-      return group;
+      const mat = color === 'white' ? whiteMat.clone() : blackMat.clone();
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.36, 1.05, 16), mat);
+      const crossV = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.36, 0.04), mat);
+      const crossH = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.04, 0.04), mat);
+      crossV.position.y = 0.95; crossH.position.y = 0.95; g.add(body, crossV, crossH);
+      return g;
     };
   }
 
-  // Create the 3D chess board with improved visuals
+  // --- board generation ---
   function createBoard() {
-    boardSquares = [];
-    
-    // Create 64 squares
-    for (let row = 0; row < 8; row++) {
-      for (let col = 0; col < 8; col++) {
-        const isLight = (row + col) % 2 === 0;
-        const squareGeometry = new THREE.BoxGeometry(1, 0.1, 1);
-        const squareMaterial = new THREE.MeshStandardMaterial({ 
-          color: isLight ? 0xf0d9b5 : 0xb58863,
-          roughness: 0.8,
-          metalness: 0.1
-        });
-        const square = new THREE.Mesh(squareGeometry, squareMaterial);
-        
-        square.position.set(
-          col - 3.5,
-          -0.05,
-          row - 3.5
-        );
-        square.receiveShadow = true;
-        square.userData = { row: row, col: col, isLight: isLight };
-        
-        scene.add(square);
-        boardSquares.push(square);
+    boardSquares = []; squareMap = {};
+    for (let r = 0; r < 8; r++) {
+      for (let c = 0; c < 8; c++) {
+        const isLight = (r + c) % 2 === 0;
+        const mat = new THREE.MeshStandardMaterial({ color: isLight ? 0xf0d9b5 : 0xb58863, roughness: 0.8, metalness: 0.06 });
+        const sq = new THREE.Mesh(new THREE.BoxGeometry(1, 0.12, 1), mat);
+        sq.position.set(c - 3.5, -0.06, r - 3.5);
+        sq.receiveShadow = true;
+        sq.userData = { row: r, col: c, isLight, isMove: false, isSelected: false };
+        scene.add(sq);
+        boardSquares.push(sq);
+        squareMap[`${r},${c}`] = sq;
       }
     }
-
-    // Board border/frame
-    const borderGeometry = new THREE.BoxGeometry(9, 0.5, 9);
-    const borderMaterial = new THREE.MeshStandardMaterial({ 
-      color: 0x8b4513,
-      roughness: 0.9,
-      metalness: 0.1
-    });
-    const border = new THREE.Mesh(borderGeometry, borderMaterial);
-    border.position.set(0, -0.3, 0);
-    border.receiveShadow = true;
-    scene.add(border);
+    const border = new THREE.Mesh(new THREE.BoxGeometry(9, 0.5, 9), new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.95 }));
+    border.position.set(0, -0.35, 0); border.receiveShadow = true; scene.add(border);
   }
 
-  // Create a 3D chess piece
-  function createChessPiece(pieceType, color, position) {
-    const piece = pieceModels[pieceType.toLowerCase()](color);
-    piece.position.copy(position);
-    piece.position.y = 0.5;
-    piece.userData = { type: pieceType, color: color };
-    piece.castShadow = true;
-    return piece;
-  }
-
-  // Handle canvas click
-  function onCanvasClick(event) {
-    handleInteraction(event.clientX, event.clientY);
-  }
-
-  // Handle canvas touch
-  function onCanvasTouch(event) {
-    event.preventDefault();
-    if (event.touches.length === 1) {
-      const touch = event.touches[0];
-      handleInteraction(touch.clientX, touch.clientY);
+  // --- FEN parsing & piece placement ---
+  function parseFEN(fen) {
+    try {
+      const parts = (fen || DEFAULT_STARTING_FEN).split(' ');
+      const rows = parts[0].split('/');
+      const board = Array.from({ length: 8 }, () => Array(8).fill(null));
+      for (let r = 0; r < 8; r++) {
+        const rowStr = rows[r] || '';
+        let c = 0;
+        for (let i = 0; i < rowStr.length; i++) {
+          const ch = rowStr[i];
+          if (/\d/.test(ch)) c += parseInt(ch, 10);
+          else { board[r][c] = ch; c++; }
+        }
+      }
+      return board;
+    } catch (err) {
+      console.warn('Invalid FEN', err);
+      return parseFEN(DEFAULT_STARTING_FEN);
     }
   }
 
-  // Handle interaction (click or touch)
-  function handleInteraction(clientX, clientY) {
-    if (!gameState || !gameActive || gameState.status !== 'active' || !isSceneReady) return;
-    if (gameState.turn !== currentUsername) return;
+  function clearAllPieces() {
+    chessPieces.forEach(p => { if (p.parent) scene.remove(p); });
+    chessPieces = [];
+  }
 
-    // Calculate mouse position in normalized device coordinates
+  function getPieceType(char) {
+    const types = { p: 'pawn', r: 'rook', n: 'knight', b: 'bishop', q: 'queen', k: 'king' };
+    return types[char] || 'pawn';
+  }
+
+  function createChessPiece(pieceType, color, row, col) {
+    const maker = pieceModels[pieceType] || pieceModels.pawn;
+    const group = maker(color);
+    const pos = coordsToPosition(row, col);
+    group.position.copy(pos); group.position.y = 0.45;
+    group.userData = { type: pieceType, color, boardRow: row, boardCol: col, isSelected: false };
+    group.castShadow = true;
+    return group;
+  }
+
+  function placePiecesFromFEN(fen) {
+    if (!scene) return;
+    clearAllPieces();
+    const board = parseFEN(fen);
+    for (let r = 0; r < 8; r++) {
+      for (let c = 0; c < 8; c++) {
+        const ch = board[r][c];
+        if (ch) {
+          const color = (ch === ch.toUpperCase()) ? 'white' : 'black';
+          const type = getPieceType(ch.toLowerCase());
+          const mesh = createChessPiece(type, color, r, c);
+          scene.add(mesh);
+          chessPieces.push(mesh);
+        }
+      }
+    }
+  }
+
+  function findPieceOnSquare(row, col) {
+    return chessPieces.find(p => p.userData.boardRow === row && p.userData.boardCol === col);
+  }
+
+  function highlightLastMove(lastMove) {
+    boardSquares.forEach(sq => {
+      const isLight = sq.userData.isLight;
+      sq.material.color.setHex(isLight ? 0xf0d9b5 : 0xb58863);
+      sq.userData.isMove = false;
+    });
+    if (!lastMove) return;
+    const from = notationToCoords(lastMove.from);
+    const to = notationToCoords(lastMove.to);
+    if (!from || !to) return;
+    const fromSq = squareMap[`${from.row},${from.col}`];
+    const toSq = squareMap[`${to.row},${to.col}`];
+    if (fromSq) fromSq.material.color.setHex(0xfff2b6);
+    if (toSq) toSq.material.color.setHex(0xd1ffd6);
+  }
+
+  // --- input basics ---
+  function screenToBoardRay(clientX, clientY) {
+    if (!canvas || !raycaster || !camera) return;
     const rect = canvas.getBoundingClientRect();
     mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
     mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
-
-    // Raycast
     raycaster.setFromCamera(mouse, camera);
-    
-    // Check for piece selection first
-    const pieceIntersects = raycaster.intersectObjects(chessPieces, true);
-    if (pieceIntersects.length > 0) {
-      const clickedPiece = pieceIntersects[0].object.parent || pieceIntersects[0].object;
-      const playerColor = getPlayerColor(currentUsername);
-      
-      if (clickedPiece.userData.color === playerColor) {
-        selectPiece(clickedPiece);
+  }
+  function getRootPiece(obj) {
+    let o = obj; while (o && !o.userData.type) o = o.parent; return o || obj;
+  }
+
+  function computeLegalMovesFor(fromNotation) {
+    if (!clientChess) return [];
+    try {
+      const verbose = clientChess.moves({ verbose: true }) || [];
+      return verbose.filter(m => m.from === fromNotation);
+    } catch (err) { console.warn('computeLegalMovesFor error', err); return []; }
+  }
+
+  function resetAllSquareColors() {
+    boardSquares.forEach(sq => {
+      const isLight = sq.userData.isLight;
+      sq.userData.isMove = false; sq.userData.isSelected = false;
+      sq.material.color.setHex(isLight ? 0xf0d9b5 : 0xb58863);
+    });
+  }
+
+  function applyLegalMoves(movesArray) {
+    if (!movesArray || movesArray.length === 0) return;
+    movesArray.forEach(m => {
+      const to = notationToCoords(m.to);
+      if (!to) return;
+      const sq = squareMap[`${to.row},${to.col}`];
+      if (sq) { sq.userData.isMove = true; sq.material.color.setHex(0x90EE90); }
+    });
+  }
+
+  function selectPiece(piece) {
+    resetAllSquareColors();
+    selectedPiece = piece;
+    piece.userData.isSelected = true;
+    piece.position.y = 0.7;
+    const from = coordsToNotation(piece.userData.boardRow, piece.userData.boardCol);
+    const legal = computeLegalMovesFor(from);
+    applyLegalMoves(legal);
+    sendMessage({ type: 'clientSelectedPiece', data: { from, postId: (gameState && gameState.postId) ? gameState.postId : undefined } });
+  }
+
+  function clearSelectionHighlights() {
+    boardSquares.forEach(sq => {
+      const isLight = sq.userData.isLight;
+      sq.userData.isMove = false; sq.userData.isSelected = false;
+      sq.material.color.setHex(isLight ? 0xf0d9b5 : 0xb58863);
+    });
+    if (selectedPiece) { selectedPiece.position.y = 0.45; selectedPiece.userData.isSelected = false; selectedPiece = null; }
+  }
+
+  function animatePieceTo(piece, destRow, destCol, lift = true, duration = 200, cb) {
+    if (!piece) { if (cb) cb(); return; }
+    const start = piece.position.clone();
+    const targetPos = coordsToPosition(destRow, destCol);
+    const end = targetPos.clone(); end.y = lift ? 0.7 : 0.45;
+    const startTime = performance.now();
+    (function step(now) {
+      const t = Math.min(1, (now - startTime) / duration);
+      piece.position.lerpVectors(start, end, 1 - Math.pow(1 - t, 3));
+      if (t < 1) requestAnimationFrame(step);
+      else { piece.position.copy(end); piece.position.y = 0.45; if (cb) cb(); }
+    })(performance.now());
+  }
+  function animateShake(mesh) {
+    if (!mesh) return;
+    const orig = mesh.position.clone(); let t = 0; const dur = 300;
+    (function step() {
+      t += 16;
+      const progress = Math.min(1, t / dur);
+      const offset = Math.sin(progress * Math.PI * 6) * (1 - progress) * 0.08;
+      mesh.position.x = orig.x + offset; mesh.position.z = orig.z + offset * 0.3;
+      if (progress < 1) requestAnimationFrame(step); else mesh.position.copy(orig);
+    })();
+  }
+
+  // --- move handling (local + send) ---
+  function performLocalMoveAndSend(from, to, promotion) {
+    if (clientChess) {
+      const mv = { from, to }; if (promotion) mv.promotion = promotion;
+      const result = clientChess.move(mv);
+      if (!result) { if (selectedPiece) animateShake(selectedPiece); clearSelectionHighlights(); return; }
+    }
+    const destCoords = notationToCoords(to);
+    const movedPiece = selectedPiece;
+    const captured = findPieceOnSquare(destCoords.row, destCoords.col);
+    if (captured && captured !== movedPiece) {
+      const cap = captured;
+      (function fade() {
+        cap.scale.multiplyScalar(0.92);
+        if (cap.scale.x < 0.04) { if (cap.parent) scene.remove(cap); chessPieces = chessPieces.filter(p => p !== cap); }
+        else requestAnimationFrame(fade);
+      })();
+    }
+    movedPiece.userData.boardRow = destCoords.row; movedPiece.userData.boardCol = destCoords.col;
+    animatePieceTo(movedPiece, destCoords.row, destCoords.col, true, 260, () => {
+      clearSelectionHighlights();
+      highlightLastMove({ from, to });
+      sendMessage({
+        type: 'makeMove',
+        data: {
+          username: currentUsername,
+          position: { from, to, promotion: promotion || undefined },
+          gameType: 'chess',
+          postId: (gameState && gameState.postId) ? gameState.postId : undefined
+        }
+      });
+    });
+  }
+
+  function attemptMoveFromSelectedTo(destRow, destCol) {
+    if (!selectedPiece) return;
+    const fromNotation = coordsToNotation(selectedPiece.userData.boardRow, selectedPiece.userData.boardCol);
+    const toNotation = coordsToNotation(destRow, destCol);
+    if (!fromNotation || !toNotation) { clearSelectionHighlights(); return; }
+    if (!clientChess) { performLocalMoveAndSend(fromNotation, toNotation); return; }
+    const legal = computeLegalMovesFor(fromNotation);
+    const match = legal.find(m => m.from === fromNotation && m.to === toNotation);
+    if (!match) { animateShake(selectedPiece); setTimeout(() => clearSelectionHighlights(), 200); return; }
+    const isPromotion = match.promotion || (selectedPiece.userData.type === 'pawn' && (destRow === 0 || destRow === 7));
+    if (isPromotion && !match.promotion) {
+      showPromotionPicker(chosen => performLocalMoveAndSend(fromNotation, toNotation, chosen));
+      return;
+    }
+    performLocalMoveAndSend(fromNotation, toNotation, match.promotion);
+  }
+
+  function showPromotionPicker(callback) {
+    const modal = document.createElement('div'); modal.className = 'modal'; modal.style.zIndex = 9999;
+    const box = document.createElement('div'); box.className = 'modal-content'; box.style.display = 'flex';
+    box.style.gap = '10px'; box.style.justifyContent = 'center'; box.style.alignItems = 'center';
+    box.style.padding = '12px'; box.style.background = '#111'; box.style.borderRadius = '8px';
+    ['q', 'r', 'b', 'n'].forEach(p => {
+      const btn = document.createElement('button'); btn.textContent = p.toUpperCase(); btn.style.padding = '8px 12px';
+      btn.onclick = () => { modal.remove(); callback(p); };
+      box.appendChild(btn);
+    });
+    modal.appendChild(box); document.body.appendChild(modal);
+  }
+
+  // --- update scene from server state ---
+  function updateSceneFromGameState() {
+    if (!isSceneReady || !gameState) return;
+    // sync local engine and visuals
+    if (gameState.chess && gameState.chess.fen) {
+      try {
+        if (!clientChess && ChessCtor) clientChess = new ChessCtor(gameState.chess.fen);
+        else if (clientChess && clientChess.fen() !== gameState.chess.fen) clientChess.load(gameState.chess.fen);
+      } catch (e) { console.warn('clientChess sync failed', e); }
+      placePiecesFromFEN(gameState.chess.fen);
+      highlightLastMove((gameState.chess && gameState.chess.lastMove) ? gameState.chess.lastMove : null);
+    } else {
+      placePiecesFromFEN(DEFAULT_STARTING_FEN);
+    }
+    gameActive = gameState.status === 'active';
+    // ensure a valid top-level turn username exists so UI & checks won't see empty string
+    ensureTurnMappingFromChess();
+    updateStatus();
+  }
+
+  // --- robust players handling & UI ---
+  function updatePlayersInfo() {
+    if (!playersElem) return;
+    if (!gameState || !Array.isArray(gameState.players) || gameState.players.length === 0) {
+      playersElem.textContent = '👥 No players yet';
+      return;
+    }
+    const maxPlayers = (gameState.maxPlayers != null) ? gameState.maxPlayers : gameState.players.length;
+    const list = gameState.players.map((p, i) => {
+      const color = (gameState.chess && gameState.chess.playersColor && gameState.chess.playersColor[p]) || (i === 0 ? 'White' : 'Black');
+      const emoji = color && color.toLowerCase().startsWith('w') ? '⚪' : '⚫';
+      return `${p} (${emoji} ${color})${p === currentUsername ? ' - You' : ''}`;
+    }).join(', ');
+    playersElem.textContent = `👥 (${gameState.players.length}/${maxPlayers}) ${list}`;
+  }
+
+  function setPlayersArray(arr) {
+    if (!gameState) gameState = {};
+    gameState.players = Array.isArray(arr) ? Array.from(new Set(arr)) : [];
+    updatePlayersInfo();
+  }
+  function addPlayerLocally(username) {
+    if (!username) return;
+    if (!gameState) gameState = {};
+    if (!Array.isArray(gameState.players)) gameState.players = [];
+    if (!gameState.players.includes(username)) { gameState.players.push(username); updatePlayersInfo(); }
+  }
+  function removePlayerLocally(username) {
+    if (!gameState || !Array.isArray(gameState.players)) return;
+    gameState.players = gameState.players.filter(p => p !== username);
+    updatePlayersInfo();
+  }
+
+  function getPlayerColor(username) {
+    if (!gameState) return null;
+    if (gameState.chess && gameState.chess.playersColor && gameState.chess.playersColor[username]) return gameState.chess.playersColor[username];
+    const idx = gameState.players ? gameState.players.indexOf(username) : -1;
+    if (idx === 0) return 'white';
+    if (idx === 1) return 'black';
+    return null;
+  }
+
+  // --- CRITICAL: ensure top-level gameState.turn is set to a username ---
+  function ensureTurnMappingFromChess() {
+    if (!gameState) return;
+    // If already set and non-empty, nothing to do
+    if (gameState.turn && typeof gameState.turn === 'string' && gameState.turn.length > 0) return;
+
+    // If chess state provides side to move and playersColor map, map color -> username
+    if (gameState.chess && gameState.chess.turn && gameState.chess.playersColor) {
+      const sideToMove = gameState.chess.turn; // 'white'|'black'
+      const entry = Object.entries(gameState.chess.playersColor).find(([, c]) => c === sideToMove);
+      if (entry && entry[0]) {
+        gameState.turn = entry[0];
         return;
       }
     }
 
-    // Check for square selection (move destination)
-    const squareIntersects = raycaster.intersectObjects(boardSquares);
-    if (squareIntersects.length > 0 && selectedPiece) {
-      const square = squareIntersects[0].object;
-      const fromRow = Math.floor(selectedPiece.position.z + 3.5);
-      const fromCol = Math.floor(selectedPiece.position.x + 3.5);
-      const toRow = square.userData.row;
-      const toCol = square.userData.col;
-      
-      makeMove(fromRow, fromCol, toRow, toCol);
+    // If no mapping available, fallback to players[0] if present
+    if (Array.isArray(gameState.players) && gameState.players.length > 0) {
+      gameState.turn = gameState.players[0];
     }
   }
 
-  // Select a piece
-  function selectPiece(piece) {
-    // Clear previous selection
-    clearSelection();
-    
-    selectedPiece = piece;
-    
-    // Highlight selected piece
-    piece.position.y = 0.7;
-    
-    // Show possible moves (simplified - just highlight squares)
-    highlightPossibleMoves(piece);
-  }
-
-  // Clear selection
-  function clearSelection() {
-    if (selectedPiece) {
-      selectedPiece.position.y = 0.5;
-      selectedPiece = null;
+  // When UI needs to show who is on turn, use this resolver (never returns empty string)
+  function resolveDisplayedTurnUsername() {
+    if (!gameState) return '';
+    if (typeof gameState.turn === 'string' && gameState.turn.length > 0) return gameState.turn;
+    if (gameState.chess && gameState.chess.turn && gameState.chess.playersColor) {
+      const color = gameState.chess.turn;
+      const found = Object.entries(gameState.chess.playersColor).find(([, c]) => c === color);
+      if (found) return found[0];
     }
-    
-    // Reset square colors
-    boardSquares.forEach(square => {
-      const isLight = square.userData.isLight;
-      square.material.color.setHex(isLight ? 0xf0d9b5 : 0xb58863);
-    });
+    if (Array.isArray(gameState.players) && gameState.players.length > 0) return gameState.players[0];
+    return '';
   }
 
-  // Highlight possible moves (simplified)
-  function highlightPossibleMoves(piece) {
-    // This is a simplified version - in a real implementation,
-    // you would calculate legal moves based on chess rules
-    boardSquares.forEach(square => {
-      if (Math.random() < 0.3) { // Random highlighting for demo
-        square.material.color.setHex(0x90EE90);
-      }
-    });
-  }
-
-  // Make a move
-  function makeMove(fromRow, fromCol, toRow, toCol) {
-    const from = positionToNotation(fromRow, fromCol);
-    const to = positionToNotation(toRow, toCol);
-    
-    // Create updated board state (simplified)
-    const newBoard = JSON.parse(JSON.stringify(gameState.chess.board));
-    newBoard[toRow][toCol] = newBoard[fromRow][fromCol];
-    newBoard[fromRow][fromCol] = null;
-    
-    // Send move to server
-    sendMessage({
-      type: 'makeMove',
-      data: {
-        username: currentUsername,
-        position: { 
-          from, 
-          to, 
-          board: newBoard
-        },
-        gameType: 'chess'
-      }
-    });
-    
-    clearSelection();
-  }
-
-  // Convert board position to chess notation
-  function positionToNotation(row, col) {
-    const files = 'abcdefgh';
-    const ranks = '87654321';
-    return files[col] + ranks[row];
-  }
-
-  // Get player color (white for first player, black for second)
-  function getPlayerColor(username) {
-    if (!gameState || !gameState.players) return 'white';
-    const playerIndex = gameState.players.indexOf(username);
-    return playerIndex === 0 ? 'white' : 'black';
-  }
-
-  // Update 3D scene based on game state
-  function updateScene() {
-    if (!gameState || !gameState.chess || !isSceneReady) return;
-
-    // Clear existing pieces
-    chessPieces.forEach(piece => {
-      scene.remove(piece);
-    });
-    chessPieces = [];
-
-    // Add pieces based on game state
-    for (let row = 0; row < 8; row++) {
-      for (let col = 0; col < 8; col++) {
-        const piece = gameState.chess.board[row][col];
-        if (piece) {
-          const position = new THREE.Vector3(
-            col - 3.5,
-            0,
-            row - 3.5
-          );
-          
-          const color = piece === piece.toUpperCase() ? 'white' : 'black';
-          const pieceType = getPieceType(piece.toLowerCase());
-          
-          const chessPiece = createChessPiece(pieceType, color, position);
-          scene.add(chessPiece);
-          chessPieces.push(chessPiece);
-        }
-      }
-    }
-  }
-
-  // Get piece type from chess notation
-  function getPieceType(piece) {
-    const types = {
-      'p': 'pawn',
-      'r': 'rook',
-      'n': 'knight',
-      'b': 'bishop',
-      'q': 'queen',
-      'k': 'king'
-    };
-    return types[piece] || 'pawn';
-  }
-
-  // Animation loop
-  function animate() {
-    requestAnimationFrame(animate);
-    
-    if (isSceneReady) {
-      renderer.render(scene, camera);
-    }
-  }
-
-  // Handle window resize
-  function onWindowResize() {
-    if (!isSceneReady) return;
-    
-    camera.aspect = canvas.clientWidth / canvas.clientHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(canvas.clientWidth, canvas.clientHeight);
-  }
-
-  // Auto-refresh game state every 3 seconds
-  function startAutoRefresh() {
-    if (refreshInterval) clearInterval(refreshInterval);
-    refreshInterval = setInterval(() => {
-      if (gameActive && gameState && gameState.status === 'active') {
-        sendMessage({ type: 'requestGameState' });
-        sendMessage({ type: 'checkTurnTimer' });
-      }
-    }, 3000);
-  }
-
-  // Start turn timer
-  function startTurnTimer() {
-    if (timerInterval) clearInterval(timerInterval);
-    timerInterval = setInterval(() => {
-      sendMessage({ type: 'checkTurnTimer' });
-    }, 1000);
-  }
-
-  // Show win/loss modal
-  function showGameEndModal(winner, isDraw, reason) {
-    const modal = document.createElement('div');
-    modal.className = 'modal';
-    
-    let modalClass = '';
-    let title = '';
-    let message = '';
-    let emoji = '';
-    
-    if (isDraw) {
-      modalClass = 'draw-modal';
-      title = "It's a Draw! 🤝";
-      if (reason === 'stalemate') {
-        message = "Stalemate! No legal moves available.";
-      } else if (reason === 'insufficient') {
-        message = "Draw by insufficient material.";
-      } else if (reason === 'repetition') {
-        message = "Draw by threefold repetition.";
-      } else if (reason === 'fifty-move') {
-        message = "Draw by fifty-move rule.";
-      } else {
-        message = "Great game! Well played by both sides.";
-      }
-      emoji = '🤝';
-    } else if (winner === currentUsername) {
-      modalClass = 'win-modal celebration';
-      title = "🎉 Congratulations! 🎉";
-      if (reason === 'checkmate') {
-        message = `Checkmate! You are the chess master!`;
-      } else if (reason === 'timeout') {
-        message = `You win by timeout! Well played!`;
-      } else {
-        message = `Victory! Excellent chess skills!`;
-      }
-      emoji = '♛';
-    } else {
-      modalClass = 'lose-modal';
-      title = "Game Over 😔";
-      if (reason === 'timeout') {
-        message = `Time's up! ${winner} wins by timeout.`;
-      } else if (reason === 'checkmate') {
-        message = `Checkmate! ${winner} wins! Better luck next time.`;
-      } else {
-        message = `${winner} wins! Keep practicing your chess skills.`;
-      }
-      emoji = '😔';
-    }
-    
-    modal.innerHTML = `
-      <div class="modal-content ${modalClass}">
-        <h2>${emoji} ${title} ${emoji}</h2>
-        <p>${message}</p>
-        <button onclick="this.closest('.modal').remove(); sendMessage({type: 'restartGame'});">
-          Play Again
-        </button>
-      </div>
-    `;
-    
-    document.body.appendChild(modal);
-    
-    // Auto-remove after 5 seconds
-    setTimeout(() => {
-      if (modal.parentNode) {
-        modal.remove();
-      }
-    }, 5000);
-  }
-
-  // Update game status display
+  // --- status & timer UI ---
   function updateStatus() {
-    if (!gameState) {
-      statusElem.textContent = 'Loading...';
-      statusElem.className = 'status-display-3d';
-      return;
-    }
-
-    statusElem.className = 'status-display-3d';
-
+    if (!statusElem) return;
+    if (!gameState) { statusElem.textContent = 'Loading...'; return; }
     if (gameState.status === 'waiting') {
-      statusElem.textContent = `⏳ Waiting for players... (${gameState.players.length}/${gameState.maxPlayers})`;
+      const count = Array.isArray(gameState.players) ? gameState.players.length : 0;
+      statusElem.textContent = `⏳ Waiting for players... (${count}/${gameState.maxPlayers || 2})`;
+      statusElem.style.background = '';
+      statusElem.style.color = '';
     } else if (gameState.status === 'active') {
-      const isMyTurn = gameState.turn === currentUsername;
-      const turnColor = getPlayerColor(gameState.turn);
-      const colorEmoji = turnColor === 'white' ? '⚪' : '⚫';
-      
-      statusElem.textContent = isMyTurn 
-        ? `🎯 Your turn - Make your move! (${colorEmoji})` 
-        : `⏳ ${gameState.turn}'s turn (${colorEmoji})`;
-      
-      if (isMyTurn) {
-        statusElem.style.background = 'rgba(40, 167, 69, 0.95)';
-        statusElem.style.color = 'white';
-      } else {
-        statusElem.style.background = 'rgba(255, 255, 255, 0.95)';
-        statusElem.style.color = '#333';
-      }
+      const displayTurnUser = resolveDisplayedTurnUsername();
+      const isMyTurn = (displayTurnUser && currentUsername) ? (displayTurnUser === currentUsername) : false;
+      const turnColor = getPlayerColor(displayTurnUser) || (gameState.chess && gameState.chess.turn) || null;
+      const emoji = (turnColor && turnColor.toLowerCase().startsWith('w')) ? '⚪' : '⚫';
+      statusElem.textContent = isMyTurn ? `🎯 Your turn (${emoji})` : `⏳ ${displayTurnUser || 'Opponent'}'s turn (${emoji})`;
+      statusElem.style.background = isMyTurn ? 'rgba(40,167,69,0.95)' : 'rgba(255,255,255,0.95)';
+      statusElem.style.color = isMyTurn ? 'white' : '#222';
     } else if (gameState.status === 'finished') {
-      const winnerColor = getPlayerColor(gameState.winner);
-      const colorEmoji = winnerColor === 'white' ? '⚪' : '⚫';
-      statusElem.textContent = gameState.winner === currentUsername 
-        ? `♛ Checkmate! You won! (${colorEmoji})` 
-        : `😔 Checkmate! ${gameState.winner} won! (${colorEmoji})`;
-      statusElem.style.background = gameState.winner === currentUsername 
-        ? 'rgba(40, 167, 69, 0.95)'
-        : 'rgba(220, 53, 69, 0.95)';
+      statusElem.textContent = gameState.winner === currentUsername ? '♛ You won (checkmate)!' : `♛ ${gameState.winner || 'Winner'} won`;
+      statusElem.style.background = gameState.winner === currentUsername ? 'rgba(40,167,69,0.95)' : 'rgba(220,53,69,0.95)';
       statusElem.style.color = 'white';
     } else if (gameState.status === 'draw') {
-      statusElem.textContent = "🤝 It's a draw!";
-      statusElem.style.background = 'rgba(255, 193, 7, 0.95)';
-      statusElem.style.color = '#333';
+      statusElem.textContent = '🤝 Draw'; statusElem.style.background = 'rgba(255,193,7,0.95)'; statusElem.style.color = '#222';
     }
   }
 
-  // Update timer display
   function updateTimer(timeRemaining, currentTurn) {
     if (!timerElem) return;
-    
-    if (gameState && gameState.status === 'active' && gameState.players.length >= 2 && gameState.firstMoveMade) {
+    if (gameState && gameState.status === 'active' && gameState.players && gameState.players.length >= 2 && gameState.firstMoveMade) {
       timerElem.style.display = 'block';
-      timerElem.className = 'timer-display-3d';
-      timerElem.textContent = `⏰ ${timeRemaining}s - ${currentTurn}'s turn`;
-      
-      if (timeRemaining <= 10) {
-        timerElem.style.background = 'rgba(220, 53, 69, 0.95)';
-      } else {
-        timerElem.style.background = 'rgba(255, 107, 107, 0.95)';
-      }
-    } else {
-      timerElem.style.display = 'none';
-    }
+      timerElem.textContent = `⏰ ${timeRemaining}s - ${currentTurn || resolveDisplayedTurnUsername()}'s turn`;
+      timerElem.style.background = timeRemaining <= 10 ? 'rgba(220,53,69,0.95)' : 'rgba(255,107,107,0.95)';
+    } else timerElem.style.display = 'none';
   }
 
-  // Update players info
-  function updatePlayersInfo() {
-    if (!gameState || !playersElem) return;
-    
-    playersElem.className = 'status-display-3d';
-    
-    if (gameState.players.length === 0) {
-      playersElem.textContent = '👥 No players yet';
-    } else {
-      const playersList = gameState.players.map((player, index) => {
-        const color = index === 0 ? 'White' : 'Black';
-        const emoji = index === 0 ? '⚪' : '⚫';
-        const isCurrent = player === currentUsername;
-        return `${player} (${emoji} ${color})${isCurrent ? ' - You' : ''}`;
-      }).join(', ');
-      playersElem.textContent = `👥 Players: ${playersList}`;
-    }
-  }
-
-  // Handle messages from parent
+  // --- messaging handler ---
   function handleMessage(event) {
     let message = event.data;
-    if (message.type === 'devvit-message' && message.data && message.data.message) {
-      message = message.data.message;
-    }
-    
+    if (message && message.type === 'devvit-message' && message.data && message.data.message) message = message.data.message;
+    if (!message || !message.type) return;
+
     switch (message.type) {
       case 'initialData':
-        currentUsername = message.data.username;
-        sendMessage({ type: 'initializeGame' });
+        currentUsername = (message.data && message.data.username) || currentUsername;
+        if (currentUsername) addPlayerLocally(currentUsername);
+        if (currentUsername) sendMessage({ type: 'joinGame', data: { username: currentUsername } });
         sendMessage({ type: 'requestGameState' });
-        break;
-
-      case 'gameState':
-        gameState = message.data;
-        gameActive = gameState.status === 'active';
-        updateScene();
-        updateStatus();
-        updatePlayersInfo();
-        
-        if (!gameState.players.includes(currentUsername)) {
-          sendMessage({
-            type: 'joinGame',
-            data: { username: currentUsername }
-          });
-          sendMessage({ type: 'requestGameState' });
-        } else if (gameActive) {
-          startAutoRefresh();
-          startTurnTimer();
-        }
         break;
 
       case 'playerJoined':
-        if (message.data.gameState) {
+        if (message.data && message.data.username) {
+          addPlayerLocally(message.data.username);
+          sendMessage({ type: 'requestGameState' });
+        } else if (message.data && message.data.gameState) {
           gameState = message.data.gameState;
-          gameActive = gameState.status === 'active';
-          updateScene();
-          updateStatus();
-          updatePlayersInfo();
-          
-          if (gameActive && gameState.players.includes(currentUsername)) {
-            startAutoRefresh();
-            startTurnTimer();
+          if (!Array.isArray(gameState.players)) gameState.players = gameState.players || [];
+          setPlayersArray(gameState.players || []);
+          updateSceneFromGameState();
+        } else {
+          sendMessage({ type: 'requestGameState' });
+        }
+        break;
+
+      case 'playerLeft':
+        if (message.data && message.data.username) {
+          removePlayerLocally(message.data.username);
+          sendMessage({ type: 'requestGameState' });
+        } else if (message.data && message.data.gameState) {
+          gameState = message.data.gameState;
+          if (!Array.isArray(gameState.players)) gameState.players = gameState.players || [];
+          setPlayersArray(gameState.players || []);
+          updateSceneFromGameState();
+        }
+        break;
+
+      case 'playerList':
+      case 'players':
+        if (message.data && Array.isArray(message.data.players)) setPlayersArray(message.data.players);
+        else if (message.data && Array.isArray(message.data)) setPlayersArray(message.data);
+        break;
+
+      case 'gameState':
+        gameState = message.data || {};
+        if (!Array.isArray(gameState.players)) gameState.players = gameState.players || [];
+        setPlayersArray(gameState.players);
+        try {
+          if (ChessCtor && gameState.chess && gameState.chess.fen) {
+            if (!clientChess) clientChess = new ChessCtor(gameState.chess.fen);
+            else if (clientChess.fen() !== gameState.chess.fen) clientChess.load(gameState.chess.fen);
           }
-        }
+        } catch (e) { console.warn('sync engine failed', e); }
+        ensureTurnMappingFromChess();
+        updateSceneFromGameState();
+        updateStatus();
         break;
 
-      case 'gameStarted':
-        gameActive = true;
-        if (message.data.gameState) {
-          gameState = message.data.gameState;
-          updateScene();
-          updateStatus();
-          updatePlayersInfo();
-        }
-        
-        if (gameActive && gameState && gameState.players.includes(currentUsername)) {
-          startAutoRefresh();
-          startTurnTimer();
-        }
-        break;
-
-      case 'gameUpdate':
       case 'moveMade':
-        if (message.data.gameState || message.data) {
-          gameState = message.data.gameState || message.data;
-          gameActive = gameState.status === 'active';
-          updateScene();
-          updateStatus();
-          updatePlayersInfo();
-        }
-        break;
-
-      case 'turnChanged':
+      case 'gameUpdate':
+        gameState = message.data.gameState || message.data || gameState;
+        if (!gameState) break;
+        if (!Array.isArray(gameState.players)) gameState.players = gameState.players || [];
+        setPlayersArray(gameState.players);
+        try {
+          if (ChessCtor && gameState.chess && gameState.chess.fen) {
+            if (!clientChess) clientChess = new ChessCtor(gameState.chess.fen);
+            else if (clientChess.fen() !== gameState.chess.fen) clientChess.load(gameState.chess.fen);
+          }
+        } catch (e) {}
+        ensureTurnMappingFromChess();
+        updateSceneFromGameState();
         updateStatus();
         break;
 
       case 'timerUpdate':
-        updateTimer(message.data.timeRemaining, message.data.currentTurn);
+        updateTimer((message.data && message.data.timeRemaining) || 0, (message.data && message.data.currentTurn) || null);
         break;
 
       case 'gameEnded':
         gameActive = false;
-        if (refreshInterval) clearInterval(refreshInterval);
-        if (timerInterval) clearInterval(timerInterval);
-        
-        if (message.data.finalState) {
+        if (message.data && message.data.finalState) {
           gameState = message.data.finalState;
-          updateScene();
-          updateStatus();
-          updatePlayersInfo();
+          if (!Array.isArray(gameState.players)) gameState.players = gameState.players || [];
+          setPlayersArray(gameState.players || []);
+          updateSceneFromGameState();
         }
-        
-        setTimeout(() => {
-          showGameEndModal(message.data.winner, message.data.isDraw, message.data.reason);
-        }, 500);
+        setTimeout(() => { showGameEndModal(message.data && message.data.winner, message.data && message.data.isDraw, message.data && message.data.reason); }, 300);
         break;
 
       case 'error':
-        statusElem.textContent = `❌ Error: ${message.message}`;
-        statusElem.className = 'status-display-3d';
-        statusElem.style.background = 'rgba(220, 53, 69, 0.95)';
-        statusElem.style.color = 'white';
+        if (statusElem) {
+          statusElem.textContent = `❌ Error: ${message.message || message.data || 'unknown'}`;
+          statusElem.style.background = 'rgba(220,53,69,0.95)'; statusElem.style.color = 'white';
+        }
+        break;
+
+      default:
         break;
     }
   }
 
-  // Add event listeners
-  window.addEventListener('message', handleMessage);
-  document.addEventListener('DOMContentLoaded', () => {
-    sendMessage({ type: 'webViewReady' });
-  });
-
-  restartBtn.addEventListener('click', () => {
-    sendMessage({ type: 'restartGame' });
-  });
-
-  // Initialize Three.js when DOM is loaded
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initThreeJS);
-  } else {
-    initThreeJS();
+  function showGameEndModal(winner, isDraw, reason) {
+    const modal = document.createElement('div'); modal.className = 'modal'; modal.style.zIndex = 9999;
+    const box = document.createElement('div'); box.className = 'modal-content';
+    box.style.padding = '18px'; box.style.background = '#111'; box.style.color = '#fff'; box.style.borderRadius = '8px';
+    const text = document.createElement('div');
+    if (isDraw) text.textContent = `Game ended in a draw (${reason || 'draw'})`;
+    else text.textContent = `${winner} won! (${reason || 'finished'})`;
+    box.appendChild(text); modal.appendChild(box); document.body.appendChild(modal);
+    setTimeout(() => modal.remove(), 2500);
   }
 
+  // --- click handler (simple) ---
+  function handleInteraction(clientX, clientY) {
+    if (!isSceneReady || !gameState || !gameActive) return;
+    screenToBoardRay(clientX, clientY);
+    const pieceIntersects = raycaster.intersectObjects(chessPieces, true);
+    if (pieceIntersects.length > 0) {
+      const clicked = getRootPiece(pieceIntersects[0].object);
+      const playerColor = getPlayerColor(currentUsername);
+      if (!playerColor) return;
+      if (clicked.userData.color === playerColor) { selectPiece(clicked); return; }
+      else {
+        if (selectedPiece) { attemptMoveFromSelectedTo(clicked.userData.boardRow, clicked.userData.boardCol); return; }
+      }
+    }
+    const squareIntersects = raycaster.intersectObjects(boardSquares);
+    if (squareIntersects.length > 0) {
+      const sq = squareIntersects[0].object;
+      if (selectedPiece) attemptMoveFromSelectedTo(sq.userData.row, sq.userData.col);
+      else {
+        const pieceAt = findPieceOnSquare(sq.userData.row, sq.userData.col);
+        if (pieceAt) {
+          const playerColor = getPlayerColor(currentUsername);
+          if (pieceAt.userData.color === playerColor) selectPiece(pieceAt);
+        }
+      }
+    }
+  }
+
+  // --- animate loop & three init ---
+  function animate() { requestAnimationFrame(animate); if (isSceneReady && renderer && scene && camera) renderer.render(scene, camera); }
+
+  async function initThreeJS() {
+    if (!canvas) { console.error('Canvas not found'); return; }
+    scene = new THREE.Scene(); scene.background = new THREE.Color(0x1a1a1a);
+    camera = new THREE.PerspectiveCamera(60, canvas.clientWidth / canvas.clientHeight, 0.1, 1000);
+    updateCameraPosition();
+
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+    renderer.shadowMap.enabled = true;
+
+    const ambient = new THREE.AmbientLight(0x707070, 0.9); scene.add(ambient);
+    const key = new THREE.DirectionalLight(0xffffff, 0.9); key.position.set(10, 20, 10); key.castShadow = true; scene.add(key);
+    const fill = new THREE.PointLight(0x8866ff, 0.25, 50); fill.position.set(-10, 8, -6); scene.add(fill);
+
+    raycaster = new THREE.Raycaster(); mouse = new THREE.Vector2();
+
+    createPieceModels(); createBoard();
+
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.MeshStandardMaterial({ color: 0x0b0b12, roughness: 0.6 }));
+    floor.rotation.x = -Math.PI / 2; floor.position.y = -1; floor.receiveShadow = true; scene.add(floor);
+
+    canvas.addEventListener('click', (e) => handleInteraction(e.clientX, e.clientY));
+    window.addEventListener('resize', () => {
+      if (!renderer || !camera) return;
+      camera.aspect = canvas.clientWidth / canvas.clientHeight; camera.updateProjectionMatrix();
+      renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+    });
+
+    isSceneReady = true;
+    if (loadingElem) loadingElem.style.display = 'none';
+    animate();
+  }
+
+  // --- join + request helpers ---
+  function ensureJoinedAndRequestState() {
+    if (currentUsername) {
+      sendMessage({ type: 'joinGame', data: { username: currentUsername } });
+      addPlayerLocally(currentUsername);
+    }
+    sendMessage({ type: 'requestGameState' });
+  }
+
+  if (restartBtn) restartBtn.addEventListener('click', ensureJoinedAndRequestState);
+
+  // --- wire host messages & start ---
+  window.addEventListener('message', handleMessage);
+  document.addEventListener('DOMContentLoaded', () => sendMessage({ type: 'webViewReady' }));
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initThreeJS);
+  else initThreeJS();
+
+  // request authoritative state when tab becomes visible (helps stale clients)
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) sendMessage({ type: 'requestGameState' }); });
+
+  // expose debug helpers
   window.sendMessage = sendMessage;
+  window._getGameState = () => gameState;
+
 })();

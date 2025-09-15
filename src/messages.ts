@@ -1,6 +1,6 @@
 /** Message from Devvit to the web view. */
 export type DevvitMessage =
-  | { type: 'initialData'; data: { username: string; currentCounter: number; postId: string } }
+  | { type: 'initialData'; data: { username: string; currentCounter: number; postId: string; theme?: string } }
   | { type: 'updateCounter'; data: { currentCounter: number } }
   | { type: 'gameState'; data: any }
   | { type: 'error'; code: number; message: string; recoverable: boolean }
@@ -22,7 +22,7 @@ export type WebViewMessage =
   | { type: 'setCounter'; data: { newCounter: number } }
   | { type: 'initializeGame' }
   | { type: 'joinGame'; data: { username: string } }
-  | { type: 'makeMove'; data: { username: string; position: any; gameType: string } }
+  | { type: 'makeMove'; data: { username: string; position: any; gameType: string; promotion?: string } }
   | { type: 'leaveGame'; data: { username: string } }
   | { type: 'requestGameState' }
   | { type: 'restartGame' }

@@ -221,11 +221,11 @@ Devvit.addCustomPostType({
                   // console.log(`Move attempt by ${username}:`, message.data);
                   
                   try {
-                    const { position, gameType } = message.data;
+                    const { position, gameType, username: moveUsername } = message.data;
                     const gameState = await GameAPI.getGameState(redis, postId);
 
                     // Validate player is in the game
-                    if (!gameState.players.includes(username)) {
+                    if (!gameState.players.includes(moveUsername || username)) {
                       webView.postMessage({
                         type: 'error',
                         code: 403,
@@ -236,7 +236,7 @@ Devvit.addCustomPostType({
                     }
 
                     // Validate it's the player's turn (except for reaction game)
-                    if (gameState.currentGame !== 'reaction' && gameState.turn !== username) {
+                    if (gameState.currentGame !== 'reaction' && gameState.turn !== (moveUsername || username)) {
                       webView.postMessage({
                         type: 'error',
                         code: 403,
@@ -262,25 +262,14 @@ Devvit.addCustomPostType({
                       type: 'move' as const,
                       game: gameType,
                       data: {
-                        playerId: username,
+                        playerId: moveUsername || username,
                         position,
                         timestamp: Date.now(),
                       },
                     };
 
-                    const newState = GameAPI.processMove(gameState, action);
+                    const newState = await GameAPI.processMove(redis, postId, action);
                     
-                    // Start turn timer after first move is made
-                    if (!newState.firstMoveMade && newState.status === 'active') {
-                      newState.firstMoveMade = true;
-                    }
-                    
-                    // Set turn timer for next player if game is still active and first move made
-                    if (newState.status === 'active' && newState.firstMoveMade) {
-                      newState.turnStartTime = Date.now();
-                    }
-                    
-                    await GameAPI.saveGameState(redis, postId, newState);
 
                     /* console.log(`Move processed. New state:`, {
                       turn: newState.turn,
@@ -298,7 +287,7 @@ Devvit.addCustomPostType({
                     webView.postMessage({
                       type: 'moveMade',
                       data: {
-                        player: username,
+                        player: moveUsername || username,
                         position,
                         gameState: newState,
                       },

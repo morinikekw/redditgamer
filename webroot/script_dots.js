@@ -1,547 +1,648 @@
-document.addEventListener('DOMContentLoaded', () => {
-    // Dice class to manage rolling and turn logic
-    class Dice {
-        type = 1; // 1: Red, 2: Green, 3: Yellow, 4: Blue
-        count = 0;
-        r = new Red();
-        g = new Green();
-        y = new Yellow();
-        b = new Blue();
-        rctns = [];
-        gctns = [];
-        yctns = [];
-        bctns = [];
+(function() {
+  // Send webViewReady immediately when script loads
+  function sendMessage(message) {
+    window.parent.postMessage(message, '*');
+  }
+  
+  // Notify parent immediately that web view is ready
+  sendMessage({ type: 'webViewReady' });
 
-        roll() {
-            const msg = document.getElementById('message');
-            // Update message based on current player
-            if (this.type === 1) {
-                msg.innerHTML = 'Red';
-                msg.style.color = 'Red';
-            } else if (this.type === 2) {
-                msg.innerHTML = 'Green';
-                msg.style.color = 'Green';
-            } else if (this.type === 3) {
-                msg.innerHTML = 'Yellow';
-                msg.style.color = 'rgb(255, 200, 0)';
-            } else if (this.type === 4) {
-                msg.innerHTML = 'Blue';
-                msg.style.color = 'Blue';
-            }
+  // DOM elements
+  const canvas = document.getElementById('gameCanvas');
+  const statusElem = document.getElementById('dotsStatus');
+  const restartBtn = document.getElementById('restartDots');
+  const playersElem = document.getElementById('players-info');
+  const timerElem = document.getElementById('timer');
+  const loadingElem = document.getElementById('loading');
 
-            // Roll the dice (1-6)
-            this.count = Math.floor(Math.random() * 6 + 1);
-            const die = document.getElementById('die');
-            die.style.backgroundImage = `url("assets/${this.count}.png")`;
+  // Game state
+  let gameState = null;
+  let currentUsername = null;
+  let gameActive = false;
+  let refreshInterval = null;
+  let timerInterval = null;
 
-            // Handle turn logic
-            if (this.type === 1) {
-                if (this.r.checker()) {
-                    die.disabled = true;
-                }
-                this.rctns.push(this.count);
-                this.bctns.length = 0;
-                this.yctns.length = 0;
-                this.gctns.length = 0;
-                if (this.count !== 6) this.type++;
-                // console.log('Red');
-            } else if (this.type === 2) {
-                if (this.g.checker()) {
-                    die.disabled = true;
-                }
-                this.gctns.push(this.count);
-                this.rctns.length = 0;
-                this.bctns.length = 0;
-                this.yctns.length = 0;
-                if (this.count !== 6) this.type++;
-                // console.log('Green');
-            } else if (this.type === 3) {
-                if (this.y.checker()) {
-                    die.disabled = true;
-                }
-                this.yctns.push(this.count);
-                this.rctns.length = 0;
-                this.bctns.length = 0;
-                this.gctns.length = 0;
-                if (this.count !== 6) this.type++;
-                // console.log('Yellow');
-            } else if (this.type === 4) {
-                if (this.b.checker()) {
-                    die.disabled = true;
-                }
-                this.bctns.push(this.count);
-                this.rctns.length = 0;
-                this.yctns.length = 0;
-                this.gctns.length = 0;
-                if (this.count !== 6) this.type = 1;
-                // console.log('Blue');
-            }
-        }
+  // Three.js variables
+  let scene, camera, renderer, raycaster, mouse;
+  let dotMeshes = [];
+  let lineMeshes = [];
+  let boxMeshes = [];
+  let isSceneReady = false;
+
+  // Camera control variables
+  let isDragging = false;
+  let previousMousePosition = { x: 0, y: 0 };
+  let cameraDistance = 12;
+  let cameraTheta = Math.PI / 4;
+  let cameraPhi = Math.PI / 3;
+
+  // Game parameters
+  const gridSize = 5;
+  const dotSpacing = 2;
+
+  // Initialize Three.js scene
+  function initThreeJS() {
+    // Scene setup
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1a1a2e);
+
+    // Camera setup
+    camera = new THREE.PerspectiveCamera(75, canvas.clientWidth / canvas.clientHeight, 0.1, 1000);
+    updateCameraPosition();
+
+    // Renderer setup
+    renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
+    renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    // Lighting
+    const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+    scene.add(ambientLight);
+
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    directionalLight.position.set(5, 10, 7);
+    directionalLight.castShadow = true;
+    scene.add(directionalLight);
+
+    // Raycaster for mouse interaction
+    raycaster = new THREE.Raycaster();
+    mouse = new THREE.Vector2();
+
+    // Create the dots grid
+    createDotsGrid();
+
+    // Event listeners
+    canvas.addEventListener('mousedown', onMouseDown, false);
+    canvas.addEventListener('mousemove', onMouseMove, false);
+    canvas.addEventListener('mouseup', onMouseUp, false);
+    canvas.addEventListener('wheel', onMouseWheel, false);
+    canvas.addEventListener('click', onCanvasClick);
+    canvas.addEventListener('touchstart', onTouchStart, { passive: false });
+    canvas.addEventListener('touchmove', onTouchMove, { passive: false });
+    canvas.addEventListener('touchend', onTouchEnd, false);
+    window.addEventListener('resize', onWindowResize);
+
+    // Start render loop
+    animate();
+
+    // Hide loading indicator
+    loadingElem.style.display = 'none';
+    isSceneReady = true;
+  }
+
+  // Update camera position
+  function updateCameraPosition() {
+    const x = cameraDistance * Math.sin(cameraPhi) * Math.cos(cameraTheta);
+    const z = cameraDistance * Math.sin(cameraPhi) * Math.sin(cameraTheta);
+    const y = cameraDistance * Math.cos(cameraPhi);
+    
+    camera.position.set(x, y, z);
+    camera.lookAt(0, 0, 0);
+  }
+
+  // Mouse event handlers
+  function onMouseDown(event) {
+    isDragging = true;
+    previousMousePosition = {
+      x: event.clientX,
+      y: event.clientY
+    };
+  }
+
+  function onMouseMove(event) {
+    if (!isDragging) return;
+    
+    const deltaX = event.clientX - previousMousePosition.x;
+    const deltaY = event.clientY - previousMousePosition.y;
+    
+    previousMousePosition = {
+      x: event.clientX,
+      y: event.clientY
+    };
+    
+    cameraTheta += deltaX * 0.01;
+    cameraPhi += deltaY * 0.01;
+    cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi));
+    
+    updateCameraPosition();
+  }
+
+  function onMouseUp() {
+    isDragging = false;
+  }
+
+  function onMouseWheel(event) {
+    event.preventDefault();
+    cameraDistance += event.deltaY * 0.01;
+    cameraDistance = Math.max(6, Math.min(20, cameraDistance));
+    updateCameraPosition();
+  }
+
+  // Touch event handlers
+  function onTouchStart(event) {
+    if (event.touches.length === 1) {
+      isDragging = true;
+      previousMousePosition = {
+        x: event.touches[0].clientX,
+        y: event.touches[0].clientY
+      };
+    }
+    event.preventDefault();
+  }
+
+  function onTouchMove(event) {
+    if (!isDragging || event.touches.length !== 1) return;
+    
+    const deltaX = event.touches[0].clientX - previousMousePosition.x;
+    const deltaY = event.touches[0].clientY - previousMousePosition.y;
+    
+    previousMousePosition = {
+      x: event.touches[0].clientX,
+      y: event.touches[0].clientY
+    };
+    
+    cameraTheta += deltaX * 0.01;
+    cameraPhi += deltaY * 0.01;
+    cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi));
+    
+    updateCameraPosition();
+    event.preventDefault();
+  }
+
+  function onTouchEnd() {
+    isDragging = false;
+  }
+
+  // Create dots grid
+  function createDotsGrid() {
+    dotMeshes = [];
+    
+    const dotGeometry = new THREE.SphereGeometry(0.1, 16, 16);
+    const dotMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0xffffff,
+      roughness: 0.3,
+      metalness: 0.7
+    });
+
+    for (let x = 0; x < gridSize; x++) {
+      for (let y = 0; y < gridSize; y++) {
+        const dot = new THREE.Mesh(dotGeometry, dotMaterial);
+        dot.position.set(
+          (x - (gridSize - 1) / 2) * dotSpacing,
+          0,
+          (y - (gridSize - 1) / 2) * dotSpacing
+        );
+        dot.userData = { x: x, y: y };
+        dot.castShadow = true;
+        
+        scene.add(dot);
+        dotMeshes.push(dot);
+      }
     }
 
-    // Token classes for each color
-    class Red_g {
-        j = 0;      // Current position
-        move = 0;   // Total moves made
-        home = true;// Whether token is at home
-        constructor(G_NO) {
-            this.G_NO = G_NO; // DOM element for the token
-        }
+    // Add base platform
+    const platformGeometry = new THREE.BoxGeometry(gridSize * dotSpacing + 2, 0.2, gridSize * dotSpacing + 2);
+    const platformMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0x333333,
+      roughness: 0.8,
+      metalness: 0.2
+    });
+    const platform = new THREE.Mesh(platformGeometry, platformMaterial);
+    platform.position.y = -0.5;
+    platform.receiveShadow = true;
+    scene.add(platform);
+  }
+
+  // Create line between two dots
+  function createLine(x1, y1, x2, y2, player) {
+    const start = new THREE.Vector3(
+      (x1 - (gridSize - 1) / 2) * dotSpacing,
+      0.05,
+      (y1 - (gridSize - 1) / 2) * dotSpacing
+    );
+    const end = new THREE.Vector3(
+      (x2 - (gridSize - 1) / 2) * dotSpacing,
+      0.05,
+      (y2 - (gridSize - 1) / 2) * dotSpacing
+    );
+
+    const direction = new THREE.Vector3().subVectors(end, start);
+    const length = direction.length();
+    
+    const lineGeometry = new THREE.CylinderGeometry(0.02, 0.02, length, 8);
+    const playerColors = {
+      [gameState?.players?.[0]]: 0xff4444,
+      [gameState?.players?.[1]]: 0x4444ff
+    };
+    const lineColor = playerColors[player] || 0xffffff;
+    
+    const lineMaterial = new THREE.MeshStandardMaterial({ 
+      color: lineColor,
+      roughness: 0.3,
+      metalness: 0.7
+    });
+    
+    const line = new THREE.Mesh(lineGeometry, lineMaterial);
+    
+    // Position and orient the line
+    const center = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
+    line.position.copy(center);
+    line.lookAt(end);
+    line.rotateX(Math.PI / 2);
+    line.castShadow = true;
+    
+    scene.add(line);
+    lineMeshes.push(line);
+    
+    return line;
+  }
+
+  // Create completed box
+  function createBox(x, y, player) {
+    const boxGeometry = new THREE.PlaneGeometry(dotSpacing * 0.8, dotSpacing * 0.8);
+    const playerColors = {
+      [gameState?.players?.[0]]: 0xff4444,
+      [gameState?.players?.[1]]: 0x4444ff
+    };
+    const boxColor = playerColors[player] || 0x888888;
+    
+    const boxMaterial = new THREE.MeshStandardMaterial({ 
+      color: boxColor,
+      transparent: true,
+      opacity: 0.6,
+      side: THREE.DoubleSide
+    });
+    
+    const box = new THREE.Mesh(boxGeometry, boxMaterial);
+    box.position.set(
+      (x + 0.5 - (gridSize - 1) / 2) * dotSpacing,
+      0.01,
+      (y + 0.5 - (gridSize - 1) / 2) * dotSpacing
+    );
+    box.rotation.x = -Math.PI / 2;
+    box.receiveShadow = true;
+    
+    scene.add(box);
+    boxMeshes.push(box);
+    
+    return box;
+  }
+
+  // Handle canvas click
+  function onCanvasClick(event) {
+    if (isDragging) return;
+    handleInteraction(event.clientX, event.clientY);
+  }
+
+  // Handle interaction
+  function handleInteraction(clientX, clientY) {
+    if (!gameState || !gameActive || gameState.status !== 'active' || !isSceneReady) return;
+    if (gameState.turn !== currentUsername) return;
+
+    const rect = canvas.getBoundingClientRect();
+    mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObjects(dotMeshes);
+
+    if (intersects.length > 0) {
+      const dot = intersects[0].object;
+      // For now, just highlight the dot - in a full implementation,
+      // you'd need to detect which line the user wants to draw
+      dot.material.emissive.setHex(0x444444);
+      setTimeout(() => {
+        dot.material.emissive.setHex(0x000000);
+      }, 200);
+    }
+  }
+
+  // Update scene based on game state
+  function updateScene() {
+    if (!gameState || !isSceneReady) return;
+
+    // Clear existing lines and boxes
+    lineMeshes.forEach(line => scene.remove(line));
+    boxMeshes.forEach(box => scene.remove(box));
+    lineMeshes = [];
+    boxMeshes = [];
+
+    // Draw lines
+    gameState.dots.lines.forEach(lineKey => {
+      const coords = lineKey.split(',').map(Number);
+      if (coords.length === 4) {
+        const [x1, y1, x2, y2] = coords;
+        createLine(x1, y1, x2, y2, 'system');
+      }
+    });
+
+    // Draw boxes
+    Object.entries(gameState.dots.boxes).forEach(([boxKey, player]) => {
+      const coords = boxKey.split(',').map(Number);
+      if (coords.length === 2) {
+        const [x, y] = coords;
+        createBox(x, y, player);
+      }
+    });
+  }
+
+  // Animation loop
+  function animate() {
+    requestAnimationFrame(animate);
+    
+    if (isSceneReady) {
+      renderer.render(scene, camera);
+    }
+  }
+
+  // Handle window resize
+  function onWindowResize() {
+    if (!isSceneReady) return;
+    
+    camera.aspect = canvas.clientWidth / canvas.clientHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(canvas.clientWidth, canvas.clientHeight);
+  }
+
+  // Auto-refresh game state
+  function startAutoRefresh() {
+    if (refreshInterval) clearInterval(refreshInterval);
+    refreshInterval = setInterval(() => {
+      if (gameActive && gameState && gameState.status === 'active') {
+        sendMessage({ type: 'requestGameState' });
+        sendMessage({ type: 'checkTurnTimer' });
+      }
+    }, 3000);
+  }
+
+  // Start turn timer
+  function startTurnTimer() {
+    if (timerInterval) clearInterval(timerInterval);
+    timerInterval = setInterval(() => {
+      sendMessage({ type: 'checkTurnTimer' });
+    }, 1000);
+  }
+
+  // Show game end modal
+  function showGameEndModal(winner, isDraw, reason) {
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    
+    let modalClass = '';
+    let title = '';
+    let message = '';
+    let emoji = '';
+    
+    if (isDraw) {
+      modalClass = 'draw-modal';
+      title = "It's a Draw! 🤝";
+      message = "Great game! Equal boxes captured.";
+      emoji = '🤝';
+    } else if (winner === currentUsername) {
+      modalClass = 'win-modal celebration';
+      title = "🎉 Congratulations! 🎉";
+      const myScore = gameState?.dots?.scores?.[winner] || 0;
+      message = `You captured ${myScore} boxes! Strategic genius!`;
+      emoji = '🏆';
+    } else {
+      modalClass = 'lose-modal';
+      title = "Game Over 😔";
+      if (reason === 'timeout') {
+        message = `Time's up! ${winner} wins by timeout.`;
+      } else {
+        const winnerScore = gameState?.dots?.scores?.[winner] || 0;
+        message = `${winner} captured ${winnerScore} boxes! Better luck next time.`;
+      }
+      emoji = '😔';
+    }
+    
+    modal.innerHTML = `
+      <div class="modal-content ${modalClass}">
+        <h2>${emoji} ${title} ${emoji}</h2>
+        <p>${message}</p>
+        <button onclick="this.closest('.modal').remove(); sendMessage({type: 'requestGameState'});">
+          Play Again
+        </button>
+      </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    setTimeout(() => {
+      if (modal.parentNode) {
+        modal.remove();
+      }
+    }, 5000);
+  }
+
+  // Update game status display
+  function updateStatus() {
+    if (!gameState) {
+      statusElem.textContent = 'Loading...';
+      statusElem.className = 'status-display-3d';
+      return;
     }
 
-    class Green_g {
-        j = 0;
-        move = 0;
-        home = true;
-        constructor(G_NO) {
-            this.G_NO = G_NO;
-        }
+    statusElem.className = 'status-display-3d';
+
+    if (gameState.status === 'waiting') {
+      statusElem.textContent = `⏳ Waiting for players... (${gameState.players.length}/${gameState.maxPlayers})`;
+    } else if (gameState.status === 'active') {
+      const isMyTurn = gameState.turn === currentUsername;
+      const myScore = gameState.dots?.scores?.[currentUsername] || 0;
+      const opponentScore = gameState.players
+        .filter(p => p !== currentUsername)
+        .reduce((max, p) => Math.max(max, gameState.dots?.scores?.[p] || 0), 0);
+      
+      statusElem.textContent = isMyTurn 
+        ? `🎯 Your turn - Boxes: You ${myScore}, Opponent ${opponentScore}` 
+        : `⏳ ${gameState.turn}'s turn - Boxes: You ${myScore}, Opponent ${opponentScore}`;
+      
+      if (isMyTurn) {
+        statusElem.style.background = 'rgba(40, 167, 69, 0.95)';
+        statusElem.style.color = 'white';
+      } else {
+        statusElem.style.background = 'rgba(255, 255, 255, 0.95)';
+        statusElem.style.color = '#333';
+      }
+    } else if (gameState.status === 'finished') {
+      const winnerScore = gameState.dots?.scores?.[gameState.winner] || 0;
+      statusElem.textContent = gameState.winner === currentUsername 
+        ? `🏆 You won with ${winnerScore} boxes!` 
+        : `😔 ${gameState.winner} won with ${winnerScore} boxes!`;
+      statusElem.style.background = gameState.winner === currentUsername 
+        ? 'rgba(40, 167, 69, 0.95)'
+        : 'rgba(220, 53, 69, 0.95)';
+      statusElem.style.color = 'white';
+    } else if (gameState.status === 'draw') {
+      statusElem.textContent = "🤝 It's a draw!";
+      statusElem.style.background = 'rgba(255, 193, 7, 0.95)';
+      statusElem.style.color = '#333';
     }
+  }
 
-    class Yellow_g {
-        j = 0;
-        move = 0;
-        home = true;
-        constructor(G_NO) {
-            this.G_NO = G_NO;
-        }
+  // Update timer display
+  function updateTimer(timeRemaining, currentTurn) {
+    if (!timerElem) return;
+    
+    if (gameState && gameState.status === 'active' && gameState.players.length >= 2 && gameState.firstMoveMade) {
+      timerElem.style.display = 'block';
+      timerElem.className = 'timer-display-3d';
+      timerElem.textContent = `⏰ ${timeRemaining}s - ${currentTurn}'s turn`;
+      
+      if (timeRemaining <= 10) {
+        timerElem.style.background = 'rgba(220, 53, 69, 0.95)';
+      } else {
+        timerElem.style.background = 'rgba(255, 107, 107, 0.95)';
+      }
+    } else {
+      timerElem.style.display = 'none';
     }
+  }
 
-    class Blue_g {
-        j = 0;
-        move = 0;
-        home = true;
-        constructor(G_NO) {
-            this.G_NO = G_NO;
-        }
+  // Update players info
+  function updatePlayersInfo() {
+    if (!gameState || !playersElem) return;
+    
+    playersElem.className = 'status-display-3d';
+    
+    if (gameState.players.length === 0) {
+      playersElem.textContent = '👥 No players yet';
+    } else {
+      const playersList = gameState.players.map((player, index) => {
+        const score = gameState.dots?.scores?.[player] || 0;
+        const isCurrent = player === currentUsername;
+        return `${player} (${score} boxes)${isCurrent ? ' - You' : ''}`;
+      }).join(', ');
+      playersElem.textContent = `👥 Players: ${playersList}`;
     }
+  }
 
-    // Instantiate tokens
-    const R1 = new Red_g(document.getElementById('r1'));
-    const R2 = new Red_g(document.getElementById('r2'));
-    const R3 = new Red_g(document.getElementById('r3'));
-    const R4 = new Red_g(document.getElementById('r4'));
-    const G1 = new Green_g(document.getElementById('g1'));
-    const G2 = new Green_g(document.getElementById('g2'));
-    const G3 = new Green_g(document.getElementById('g3'));
-    const G4 = new Green_g(document.getElementById('g4'));
-    const Y1 = new Yellow_g(document.getElementById('y1'));
-    const Y2 = new Yellow_g(document.getElementById('y2'));
-    const Y3 = new Yellow_g(document.getElementById('y3'));
-    const Y4 = new Yellow_g(document.getElementById('y4'));
-    const B1 = new Blue_g(document.getElementById('b1'));
-    const B2 = new Blue_g(document.getElementById('b2'));
-    const B3 = new Blue_g(document.getElementById('b3'));
-    const B4 = new Blue_g(document.getElementById('b4'));
-
-    // Player classes
-    class Red {
-        cnt = 0; // Count of rolls processed
-        y = null;// Current token element
-        a = 0;   // Animation step counter
-        x = null;// Target position element
-
-        mover(RN, count) {
-            this.y = RN.G_NO;
-            // console.log(`Check: ${RN.move + count}`);
-            if (RN.move + count < 57) {
-                if (RN.j !== 0 && !RN.home) {
-                    const totalCount = count + RN.j;
-                    for (let i = RN.j; i <= totalCount; i++) {
-                        this.a++;
-                        setTimeout(() => this.movefunc(i, RN.move), 1000 * this.a);
-                        RN.move++;
-                    }
-                    RN.move--;
-                    RN.j = totalCount;
-                    this.killcheck(totalCount);
-                    this.a = 0;
-                    return true;
-                } else if (count === 6) {
-                    this.x = document.getElementById('1');
-                    this.x.appendChild(this.y);
-                    RN.j = 1;
-                    RN.home = false;
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        movefunc(i, move) {
-            if (move >= 51) {
-                this.x = i === 57 ? document.getElementById('out') : document.getElementById(`rf${i}`);
-            } else {
-                this.x = document.getElementById(i);
-            }
-            this.x.appendChild(this.y);
-        }
-
-        choose(i) {
-            let ck = false;
-            if (roll.rctns.length !== 0) {
-                if (i === 1) ck = this.mover(R1, roll.rctns[this.cnt]);
-                else if (i === 2) ck = this.mover(R2, roll.rctns[this.cnt]);
-                else if (i === 3) ck = this.mover(R3, roll.rctns[this.cnt]);
-                else if (i === 4) ck = this.mover(R4, roll.rctns[this.cnt]);
-                // console.log(`Moved: ${ck}`);
-                if (ck) {
-                    if (this.cnt === roll.rctns.length - 1) {
-                        // console.log('last');
-                        document.getElementById('die').disabled = false;
-                        roll.rctns.length = 0;
-                        this.cnt = 0;
-                    } else {
-                        // console.log('not last');
-                        this.cnt++;
-                    }
-                }
-            }
-        }
-
-        checker() {
-            if (R1.home && R2.home && R3.home && R4.home && roll.count !== 6 && roll.rctns[roll.rctns.length - 1] !== 6) {
-                return false;
-            }
-            return roll.count === 6 ? false : true;
-        }
-
-        killcheck(j) {
-            const safe = [22, 27, 14, 9, 40, 35, 48, 1];
-            if (!safe.includes(j)) {
-                const tokens = [
-                    [G1, 'g_g1'], [G2, 'g_g2'], [G3, 'g_g3'], [G4, 'g_g4'],
-                    [Y1, 'g_y1'], [Y2, 'g_y2'], [Y3, 'g_y3'], [Y4, 'g_y4'],
-                    [B1, 'g_b1'], [B2, 'g_b2'], [B3, 'g_b3'], [B4, 'g_b4']
-                ];
-                tokens.forEach(([token, homeId]) => {
-                    if (j === token.j) {
-                        token.j = 0;
-                        token.home = true;
-                        token.move = 0;
-                        document.getElementById(homeId).appendChild(token.G_NO);
-                        roll.type--;
-                    }
-                });
-            }
-        }
+  // Handle messages from parent
+  function handleMessage(event) {
+    let message = event.data;
+    if (message.type === 'devvit-message' && message.data && message.data.message) {
+      message = message.data.message;
     }
+    
+    switch (message.type) {
+      case 'initialData':
+        currentUsername = message.data.username;
+        sendMessage({ type: 'initializeGame' });
+        sendMessage({ type: 'requestGameState' });
+        break;
 
-    class Green {
-        cnt = 0;
-        y = null;
-        a = 0;
-        x = null;
-
-        mover(RN, count) {
-            // console.log(`Check: ${RN.move + count}`);
-            this.y = RN.G_NO;
-            if (RN.move + count < 57) {
-                if (RN.j !== 0 && !RN.home) {
-                    let totalCount = count + RN.j;
-                    for (let i = RN.j; i <= totalCount; i++) {
-                        if (i === 53) {
-                            totalCount = totalCount - i + 1;
-                            RN.j = 1;
-                            i = 1;
-                        }
-                        this.a++;
-                        setTimeout(() => this.movefunc(i, RN.move), 1000 * this.a);
-                        RN.move++;
-                    }
-                    RN.move--;
-                    RN.j = totalCount;
-                    this.killcheck(totalCount);
-                    this.a = 0;
-                    return true;
-                } else if (count === 6) {
-                    this.x = document.getElementById('14');
-                    this.x.appendChild(this.y);
-                    RN.j = 14;
-                    RN.home = false;
-                    return true;
-                }
-            }
-            return false;
+      case 'gameState':
+        gameState = message.data;
+        gameActive = gameState.status === 'active';
+        updateScene();
+        updateStatus();
+        updatePlayersInfo();
+        
+        if (!gameState.players.includes(currentUsername)) {
+          sendMessage({
+            type: 'joinGame',
+            data: { username: currentUsername }
+          });
+          sendMessage({ type: 'requestGameState' });
+        } else if (gameActive) {
+          startAutoRefresh();
+          startTurnTimer();
         }
+        break;
 
-        movefunc(i, move) {
-            if (move >= 51) {
-                this.x = i === 18 ? document.getElementById('out') : document.getElementById(`gf${i}`);
-            } else {
-                this.x = document.getElementById(i);
-            }
-            this.x.appendChild(this.y);
+      case 'playerJoined':
+        if (message.data.gameState) {
+          gameState = message.data.gameState;
+          gameActive = gameState.status === 'active';
+          updateScene();
+          updateStatus();
+          updatePlayersInfo();
+          
+          if (gameActive && gameState.players.includes(currentUsername)) {
+            startAutoRefresh();
+            startTurnTimer();
+          }
         }
+        break;
 
-        choose(i) {
-            let ck = false;
-            if (roll.gctns.length !== 0) {
-                if (i === 1) ck = this.mover(G1, roll.gctns[this.cnt]);
-                else if (i === 2) ck = this.mover(G2, roll.gctns[this.cnt]);
-                else if (i === 3) ck = this.mover(G3, roll.gctns[this.cnt]);
-                else if (i === 4) ck = this.mover(G4, roll.gctns[this.cnt]);
-                // console.log(ck);
-                if (ck) {
-                    if (this.cnt === roll.gctns.length - 1) {
-                        document.getElementById('die').disabled = false;
-                        roll.gctns.length = 0;
-                        this.cnt = 0;
-                    } else {
-                        this.cnt++;
-                    }
-                }
-            }
+      case 'gameStarted':
+        gameActive = true;
+        if (message.data.gameState) {
+          gameState = message.data.gameState;
+          updateScene();
+          updateStatus();
+          updatePlayersInfo();
         }
+        
+        if (gameActive && gameState && gameState.players.includes(currentUsername)) {
+          startAutoRefresh();
+          startTurnTimer();
+        }
+        break;
 
-        checker() {
-            if (G1.home && G2.home && G3.home && G4.home && roll.count !== 6 && roll.gctns[roll.gctns.length - 1] !== 6) {
-                return false;
-            }
-            return roll.count === 6 ? false : true;
+      case 'gameUpdate':
+      case 'moveMade':
+        if (message.data.gameState || message.data) {
+          gameState = message.data.gameState || message.data;
+          gameActive = gameState.status === 'active';
+          updateScene();
+          updateStatus();
+          updatePlayersInfo();
         }
+        break;
 
-        killcheck(j) {
-            const safe = [22, 27, 14, 9, 40, 35, 48, 1];
-            if (!safe.includes(j)) {
-                const tokens = [
-                    [R1, 'g_r1'], [R2, 'g_r2'], [R3, 'g_r3'], [R4, 'g_r4'],
-                    [Y1, 'g_y1'], [Y2, 'g_y2'], [Y3, 'g_y3'], [Y4, 'g_y4'],
-                    [B1, 'g_b1'], [B2, 'g_b2'], [B3, 'g_b3'], [B4, 'g_b4']
-                ];
-                tokens.forEach(([token, homeId]) => {
-                    if (j === token.j) {
-                        token.j = 0;
-                        token.home = true;
-                        token.move = 0;
-                        document.getElementById(homeId).appendChild(token.G_NO);
-                        roll.type--;
-                    }
-                });
-            }
+      case 'turnChanged':
+        updateStatus();
+        break;
+
+      case 'timerUpdate':
+        updateTimer(message.data.timeRemaining, message.data.currentTurn);
+        break;
+
+      case 'gameEnded':
+        gameActive = false;
+        if (refreshInterval) clearInterval(refreshInterval);
+        if (timerInterval) clearInterval(timerInterval);
+        
+        if (message.data.finalState) {
+          gameState = message.data.finalState;
+          updateScene();
+          updateStatus();
+          updatePlayersInfo();
         }
+        
+        setTimeout(() => {
+          showGameEndModal(message.data.winner, message.data.isDraw, message.data.reason);
+        }, 500);
+        break;
+
+      case 'error':
+        statusElem.textContent = `❌ Error: ${message.message}`;
+        statusElem.className = 'status-display-3d';
+        statusElem.style.background = 'rgba(220, 53, 69, 0.95)';
+        statusElem.style.color = 'white';
+        break;
     }
+  }
 
-    class Yellow {
-        cnt = 0;
-        y = null;
-        a = 0;
-        x = null;
+  // Add event listeners
+  window.addEventListener('message', handleMessage);
+  document.addEventListener('DOMContentLoaded', () => {
+    sendMessage({ type: 'webViewReady' });
+  });
 
-        mover(RN, count) {
-            // console.log(`Check: ${RN.move + count}`);
-            this.y = RN.G_NO;
-            if (RN.move + count < 57) {
-                if (RN.j !== 0 && !RN.home) {
-                    let totalCount = count + RN.j;
-                    for (let i = RN.j; i <= totalCount; i++) {
-                        if (i === 53) {
-                            totalCount = totalCount - i + 1;
-                            RN.j = 1;
-                            i = 1;
-                        }
-                        this.a++;
-                        setTimeout(() => this.movefunc(i, RN.move), 1000 * this.a);
-                        RN.move++;
-                    }
-                    RN.move--;
-                    RN.j = totalCount;
-                    this.killcheck(totalCount);
-                    this.a = 0;
-                    return true;
-                } else if (count === 6) {
-                    this.x = document.getElementById('27');
-                    this.x.appendChild(this.y);
-                    RN.j = 27;
-                    RN.home = false;
-                    return true;
-                }
-            }
-            return false;
-        }
+  restartBtn.addEventListener('click', () => {
+    sendMessage({ type: 'requestGameState' });
+  });
 
-        movefunc(i, move) {
-            if (move >= 51) {
-                this.x = i === 31 ? document.getElementById('out') : document.getElementById(`yf${i}`);
-            } else {
-                this.x = document.getElementById(i);
-            }
-            this.x.appendChild(this.y);
-        }
+  // Initialize Three.js when DOM is loaded
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initThreeJS);
+  } else {
+    initThreeJS();
+  }
 
-        choose(i) {
-            let ck = false;
-            if (roll.yctns.length !== 0) {
-                if (i === 1) ck = this.mover(Y1, roll.yctns[this.cnt]);
-                else if (i === 2) ck = this.mover(Y2, roll.yctns[this.cnt]);
-                else if (i === 3) ck = this.mover(Y3, roll.yctns[this.cnt]);
-                else if (i === 4) ck = this.mover(Y4, roll.yctns[this.cnt]);
-                // console.log(ck);
-                if (ck) {
-                    if (this.cnt === roll.yctns.length - 1) {
-                        document.getElementById('die').disabled = false;
-                        roll.yctns.length = 0;
-                        this.cnt = 0;
-                    } else {
-                        this.cnt++;
-                    }
-                }
-            }
-        }
-
-        checker() {
-            if (Y1.home && Y2.home && Y3.home && Y4.home && roll.count !== 6 && roll.yctns[roll.yctns.length - 1] !== 6) {
-                return false;
-            }
-            return roll.count === 6 ? false : true;
-        }
-
-        killcheck(j) {
-            const safe = [22, 27, 14, 9, 40, 35, 48, 1];
-            if (!safe.includes(j)) {
-                const tokens = [
-                    [R1, 'g_r1'], [R2, 'g_r2'], [R3, 'g_r3'], [R4, 'g_r4'],
-                    [G1, 'g_g1'], [G2, 'g_g2'], [G3, 'g_g3'], [G4, 'g_g4'],
-                    [B1, 'g_b1'], [B2, 'g_b2'], [B3, 'g_b3'], [B4, 'g_b4']
-                ];
-                tokens.forEach(([token, homeId]) => {
-                    if (j === token.j) {
-                        token.j = 0;
-                        token.home = true;
-                        token.move = 0;
-                        document.getElementById(homeId).appendChild(token.G_NO);
-                        roll.type--;
-                    }
-                });
-            }
-        }
-    }
-
-    class Blue {
-        cnt = 0;
-        y = null;
-        a = 0;
-        x = null;
-
-        mover(RN, count) {
-            // console.log(`Check: ${RN.move + count}`);
-            this.y = RN.G_NO;
-            if (RN.move + count < 57) {
-                if (RN.j !== 0 && !RN.home) {
-                    let totalCount = count + RN.j;
-                    for (let i = RN.j; i <= totalCount; i++) {
-                        if (i === 53) {
-                            totalCount = totalCount - i + 1;
-                            RN.j = 1;
-                            i = 1;
-                        }
-                        this.a++;
-                        setTimeout(() => this.movefunc(i, RN.move), 1000 * this.a);
-                        RN.move++;
-                    }
-                    RN.move--;
-                    RN.j = totalCount;
-                    this.killcheck(totalCount);
-                    this.a = 0;
-                    return true;
-                } else if (count === 6) {
-                    this.x = document.getElementById('40');
-                    this.x.appendChild(this.y);
-                    RN.j = 40;
-                    RN.home = false;
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        movefunc(i, move) {
-            if (move >= 51) {
-                this.x = i === 44 ? document.getElementById('out') : document.getElementById(`bf${i}`);
-            } else {
-                this.x = document.getElementById(i);
-            }
-            this.x.appendChild(this.y);
-        }
-
-        choose(i) {
-            let ck = false;
-            if (roll.bctns.length !== 0) {
-                if (i === 1) ck = this.mover(B1, roll.bctns[this.cnt]);
-                else if (i === 2) ck = this.mover(B2, roll.bctns[this.cnt]);
-                else if (i === 3) ck = this.mover(B3, roll.bctns[this.cnt]);
-                else if (i === 4) ck = this.mover(B4, roll.bctns[this.cnt]);
-                // console.log(ck);
-                if (ck) {
-                    if (this.cnt === roll.bctns.length - 1) {
-                        document.getElementById('die').disabled = false;
-                        roll.bctns.length = 0;
-                        this.cnt = 0;
-                    } else {
-                        this.cnt++;
-                    }
-                }
-            }
-        }
-
-        checker() {
-            if (B1.home && B2.home && B3.home && B4.home && roll.count !== 6 && roll.bctns[roll.bctns.length - 1] !== 6) {
-                return false;
-            }
-            return roll.count === 6 ? false : true;
-        }
-
-        killcheck(j) {
-            const safe = [22, 27, 14, 9, 40, 35, 48, 1];
-            if (!safe.includes(j)) {
-                const tokens = [
-                    [R1, 'g_r1'], [R2, 'g_r2'], [R3, 'g_r3'], [R4, 'g_r4'],
-                    [G1, 'g_g1'], [G2, 'g_g2'], [G3, 'g_g3'], [G4, 'g_g4'],
-                    [Y1, 'g_y1'], [Y2, 'g_y2'], [Y3, 'g_y3'], [Y4, 'g_y4']
-                ];
-                tokens.forEach(([token, homeId]) => {
-                    if (j === token.j) {
-                        token.j = 0;
-                        token.home = true;
-                        token.move = 0;
-                        document.getElementById(homeId).appendChild(token.G_NO);
-                        roll.type = 4;
-                    }
-                });
-            }
-        }
-    }
-
-    // Instantiate game objects
-    const roll = new Dice();
-    const red = new Red();
-    const green = new Green();
-    const yellow = new Yellow();
-    const blue = new Blue();
-
-    // Initialize message display
-    const msg = document.getElementById('message');
-    msg.style.fontSize = '35px';
-    msg.style.textAlign = 'center';
-    msg.innerHTML = 'Red';
-    msg.style.color = 'Red';
-
-    // Attach event listeners
-    document.getElementById('die').addEventListener('click', () => roll.roll());
-    document.getElementById('r1').addEventListener('click', () => red.choose(1));
-    document.getElementById('r2').addEventListener('click', () => red.choose(2));
-    document.getElementById('r3').addEventListener('click', () => red.choose(3));
-    document.getElementById('r4').addEventListener('click', () => red.choose(4));
-    document.getElementById('g1').addEventListener('click', () => green.choose(1));
-    document.getElementById('g2').addEventListener('click', () => green.choose(2));
-    document.getElementById('g3').addEventListener('click', () => green.choose(3));
-    document.getElementById('g4').addEventListener('click', () => green.choose(4));
-    document.getElementById('y1').addEventListener('click', () => yellow.choose(1));
-    document.getElementById('y2').addEventListener('click', () => yellow.choose(2));
-    document.getElementById('y3').addEventListener('click', () => yellow.choose(3));
-    document.getElementById('y4').addEventListener('click', () => yellow.choose(4));
-    document.getElementById('b1').addEventListener('click', () => blue.choose(1));
-    document.getElementById('b2').addEventListener('click', () => blue.choose(2));
-    document.getElementById('b3').addEventListener('click', () => blue.choose(3));
-    document.getElementById('b4').addEventListener('click', () => blue.choose(4));
-});
+  window.sendMessage = sendMessage;
+})();

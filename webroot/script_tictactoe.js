@@ -3,7 +3,7 @@
   function sendMessage(message) {
     window.parent.postMessage(message, '*');
   }
-  
+
   // Notify parent immediately that web view is ready
   sendMessage({ type: 'webViewReady' });
 
@@ -24,23 +24,34 @@
 
   // Three.js variables
   let scene, camera, renderer, raycaster, mouse;
-  let boardCells = [];
+  let gameCube = null;
+  let cubeFaces = [];
   let gamePieces = [];
   let isSceneReady = false;
 
-  // Camera control variables
+  // Camera and cube control variables
   let isDragging = false;
+  let isRotatingCube = false;
   let previousMousePosition = { x: 0, y: 0 };
-  let cameraDistance = 8;
-  let cameraTheta = Math.PI / 4; // azimuth angle
-  let cameraPhi = Math.PI / 3;   // polar angle
+  let cameraDistance = 6;
+  let cameraTheta = Math.PI / 4;
+  let cameraPhi = Math.PI / 3;
+  let cubeRotation = { x: 0, y: 0, z: 0 };
+
+  // Touch-specific helpers
+  let touchStartTime = 0;
+  let touchStartPos = { x: 0, y: 0 };
+  let touchMoved = false;
+  let lastTouchWasTap = false;
+  const TOUCH_MOVE_THRESHOLD = 8; // pixels
+  const TAP_MAX_DURATION = 300; // ms
 
   // Initialize Three.js scene
   function initThreeJS() {
     // Scene setup
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x1a1a2e);
-    scene.fog = new THREE.Fog(0x1a1a2e, 5, 15);
+    scene.fog = new THREE.Fog(0x1a1a2e, 8, 20);
 
     // Camera setup
     camera = new THREE.PerspectiveCamera(75, canvas.clientWidth / canvas.clientHeight, 0.1, 1000);
@@ -53,38 +64,38 @@
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     // Lighting
-    const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+    const ambientLight = new THREE.AmbientLight(0x404040, 0.8);
     scene.add(ambientLight);
 
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    directionalLight.position.set(5, 10, 7);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
+    directionalLight.position.set(10, 10, 10);
     directionalLight.castShadow = true;
     directionalLight.shadow.mapSize.width = 2048;
     directionalLight.shadow.mapSize.height = 2048;
     scene.add(directionalLight);
 
-    // Add colored point lights for more dynamic lighting
-    const redLight = new THREE.PointLight(0xff0000, 0.5, 8);
-    redLight.position.set(3, 3, 3);
-    scene.add(redLight);
+    // Add colored point lights for better cube visibility
+    const lights = [
+      { color: 0xff4444, position: [8, 0, 0] },
+      { color: 0x44ff44, position: [-8, 0, 0] },
+      { color: 0x4444ff, position: [0, 8, 0] },
+      { color: 0xffff44, position: [0, -8, 0] },
+      { color: 0xff44ff, position: [0, 0, 8] },
+      { color: 0x44ffff, position: [0, 0, -8] }
+    ];
 
-    const blueLight = new THREE.PointLight(0x0000ff, 0.5, 8);
-    blueLight.position.set(-3, 3, -3);
-    scene.add(blueLight);
+    lights.forEach(light => {
+      const pointLight = new THREE.PointLight(light.color, 0.3, 15);
+      pointLight.position.set(...light.position);
+      scene.add(pointLight);
+    });
 
     // Raycaster for mouse interaction
     raycaster = new THREE.Raycaster();
     mouse = new THREE.Vector2();
 
-    // Create the game board
-    createBoard();
-
-    // Add a grid floor for better depth perception
-    const gridHelper = new THREE.GridHelper(10, 10, 0x000000, 0x000000);
-    gridHelper.position.y = -2;
-    gridHelper.material.opacity = 0.2;
-    gridHelper.material.transparent = true;
-    scene.add(gridHelper);
+    // Create the 3D cube
+    createCube();
 
     // Event listeners
     canvas.addEventListener('mousedown', onMouseDown, false);
@@ -105,321 +116,315 @@
     isSceneReady = true;
   }
 
-  // Update camera position based on spherical coordinates
+  // Update camera position
   function updateCameraPosition() {
     const x = cameraDistance * Math.sin(cameraPhi) * Math.cos(cameraTheta);
     const z = cameraDistance * Math.sin(cameraPhi) * Math.sin(cameraTheta);
     const y = cameraDistance * Math.cos(cameraPhi);
-    
+
     camera.position.set(x, y, z);
     camera.lookAt(0, 0, 0);
   }
 
-  // Mouse event handlers for camera control
+  // Create the 3D Tic Tac Toe cube
+  function createCube() {
+    gameCube = new THREE.Group();
+    cubeFaces = [];
+
+    const faceSize = 3;
+    const cellSize = 0.9;
+    const gap = 0.1;
+
+    // Define face positions and rotations
+    const faceConfigs = [
+      { position: [0, 0, faceSize/2], rotation: [0, 0, 0], name: 'front' },      // Front (0)
+      { position: [0, 0, -faceSize/2], rotation: [0, Math.PI, 0], name: 'back' }, // Back (1)
+      { position: [faceSize/2, 0, 0], rotation: [0, Math.PI/2, 0], name: 'right' }, // Right (2)
+      { position: [-faceSize/2, 0, 0], rotation: [0, -Math.PI/2, 0], name: 'left' }, // Left (3)
+      { position: [0, faceSize/2, 0], rotation: [-Math.PI/2, 0, 0], name: 'top' },   // Top (4)
+      { position: [0, -faceSize/2, 0], rotation: [Math.PI/2, 0, 0], name: 'bottom' } // Bottom (5)
+    ];
+
+    faceConfigs.forEach((config, faceIndex) => {
+      const faceGroup = new THREE.Group();
+      const faceCells = [];
+
+      // Create 9 cells for each face
+      for (let row = 0; row < 3; row++) {
+        for (let col = 0; col < 3; col++) {
+          const cellIndex = row * 3 + col;
+
+          // Cell geometry
+          const cellGeometry = new THREE.PlaneGeometry(cellSize, cellSize);
+          const cellMaterial = new THREE.MeshStandardMaterial({
+            color: 0x2a2a3a,
+            transparent: true,
+            opacity: 0.8,
+            side: THREE.DoubleSide
+          });
+          const cell = new THREE.Mesh(cellGeometry, cellMaterial);
+
+          // Position cell
+          const x = (col - 1) * (cellSize + gap);
+          const y = (1 - row) * (cellSize + gap);
+          cell.position.set(x, y, 0.01);
+
+          // Add border
+          const borderGeometry = new THREE.EdgesGeometry(cellGeometry);
+          const borderMaterial = new THREE.LineBasicMaterial({ color: 0x666666 });
+          const border = new THREE.LineSegments(borderGeometry, borderMaterial);
+          border.position.copy(cell.position);
+
+          cell.userData = {
+            faceIndex: faceIndex,
+            cellIndex: cellIndex,
+            occupied: false,
+            face: config.name
+          };
+
+          faceGroup.add(cell);
+          faceGroup.add(border);
+          faceCells.push(cell);
+        }
+      }
+
+      // Position and rotate face
+      faceGroup.position.set(...config.position);
+      faceGroup.rotation.set(...config.rotation);
+      faceGroup.userData = { faceIndex: faceIndex, name: config.name };
+
+      gameCube.add(faceGroup);
+      cubeFaces.push(faceCells);
+    });
+
+    // Add cube frame
+    const frameGeometry = new THREE.BoxGeometry(faceSize + 0.1, faceSize + 0.1, faceSize + 0.1);
+    const frameMaterial = new THREE.MeshStandardMaterial({
+      color: 0x444444,
+      transparent: true,
+      opacity: 0.1,
+      wireframe: true
+    });
+    const frame = new THREE.Mesh(frameGeometry, frameMaterial);
+    gameCube.add(frame);
+
+    scene.add(gameCube);
+  }
+
+  // Mouse event handlers
   function onMouseDown(event) {
     isDragging = true;
     previousMousePosition = {
       x: event.clientX,
       y: event.clientY
     };
+
+    // Check if we should rotate cube or camera
+    isRotatingCube = event.shiftKey || event.ctrlKey;
   }
 
   function onMouseMove(event) {
     if (!isDragging) return;
-    
+
     const deltaX = event.clientX - previousMousePosition.x;
     const deltaY = event.clientY - previousMousePosition.y;
-    
+
     previousMousePosition = {
       x: event.clientX,
       y: event.clientY
     };
-    
-    // Adjust rotation speed
-    cameraTheta += deltaX * 0.01;
-    cameraPhi += deltaY * 0.01;
-    
-    // Constrain phi to avoid flipping
-    cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi));
-    
-    updateCameraPosition();
+
+    if (isRotatingCube && gameCube) {
+      // Rotate the cube
+      cubeRotation.y += deltaX * 0.01;
+      cubeRotation.x += deltaY * 0.01;
+      gameCube.rotation.set(cubeRotation.x, cubeRotation.y, cubeRotation.z);
+    } else {
+      // Rotate the camera
+      cameraTheta += deltaX * 0.01;
+      cameraPhi += deltaY * 0.01;
+      cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi));
+      updateCameraPosition();
+    }
   }
 
   function onMouseUp() {
     isDragging = false;
+    isRotatingCube = false;
   }
 
   function onMouseWheel(event) {
     event.preventDefault();
-    
-    // Adjust zoom speed
     cameraDistance += event.deltaY * 0.01;
-    
-    // Constrain zoom distance
-    cameraDistance = Math.max(5, Math.min(15, cameraDistance));
-    
+    cameraDistance = Math.max(6, Math.min(20, cameraDistance));
     updateCameraPosition();
   }
 
-  // Touch event handlers for mobile
+  // Touch event handlers (improved tap vs pan detection)
   function onTouchStart(event) {
     if (event.touches.length === 1) {
-      isDragging = true;
-      previousMousePosition = {
-        x: event.touches[0].clientX,
-        y: event.touches[0].clientY
-      };
+      const t = event.touches[0];
+      touchStartTime = Date.now();
+      touchStartPos = { x: t.clientX, y: t.clientY };
+      touchMoved = false;
+      // do NOT set isDragging yet; only set when movement passes threshold
+      isRotatingCube = false;
     }
+    // Prevent default to avoid the browser doing its own gestures
     event.preventDefault();
   }
 
   function onTouchMove(event) {
-    if (!isDragging || event.touches.length !== 1) return;
-    
-    const deltaX = event.touches[0].clientX - previousMousePosition.x;
-    const deltaY = event.touches[0].clientY - previousMousePosition.y;
-    
-    previousMousePosition = {
-      x: event.touches[0].clientX,
-      y: event.touches[0].clientY
-    };
-    
-    cameraTheta += deltaX * 0.01;
-    cameraPhi += deltaY * 0.01;
-    
-    // Constrain phi to avoid flipping
-    cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi));
-    
-    updateCameraPosition();
+    if (event.touches.length !== 1) return;
+
+    const t = event.touches[0];
+    const deltaX = t.clientX - touchStartPos.x;
+    const deltaY = t.clientY - touchStartPos.y;
+    const distSq = deltaX * deltaX + deltaY * deltaY;
+
+    if (!touchMoved && Math.sqrt(distSq) > TOUCH_MOVE_THRESHOLD) {
+      // Considered a move/pan — enable dragging/rotation
+      touchMoved = true;
+      isDragging = true;
+      isRotatingCube = true; // user intends to rotate on touch-drag
+      previousMousePosition = { x: t.clientX, y: t.clientY };
+    }
+
+    if (touchMoved) {
+      // perform rotation just like mouse move
+      const deltaMoveX = t.clientX - previousMousePosition.x;
+      const deltaMoveY = t.clientY - previousMousePosition.y;
+      previousMousePosition = { x: t.clientX, y: t.clientY };
+
+      if (isRotatingCube && gameCube) {
+        cubeRotation.y += deltaMoveX * 0.01;
+        cubeRotation.x += deltaMoveY * 0.01;
+        gameCube.rotation.set(cubeRotation.x, cubeRotation.y, cubeRotation.z);
+      } else {
+        cameraTheta += deltaMoveX * 0.01;
+        cameraPhi += deltaMoveY * 0.01;
+        cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi));
+        updateCameraPosition();
+      }
+    }
+
     event.preventDefault();
   }
 
-  function onTouchEnd() {
+  function onTouchEnd(event) {
+    // If this was a quick tap (no movement and short duration), treat as a click/tap
+    const duration = Date.now() - touchStartTime;
+    if (!touchMoved && duration <= TAP_MAX_DURATION) {
+      // Use changedTouches if available, otherwise fallback to touchStartPos
+      const touch = (event.changedTouches && event.changedTouches[0]) || null;
+      const clientX = touch ? touch.clientX : touchStartPos.x;
+      const clientY = touch ? touch.clientY : touchStartPos.y;
+
+      // Send interaction
+      handleInteraction(clientX, clientY);
+
+      // Mark to prevent duplicate click event (some browsers fire click after touchend)
+      lastTouchWasTap = true;
+      setTimeout(() => { lastTouchWasTap = false; }, 400);
+    }
+
+    // Reset dragging/rotation flags
     isDragging = false;
+    isRotatingCube = false;
+    touchMoved = false;
+    event.preventDefault();
   }
 
-  // Create the 3D Tic Tac Toe board with improved visuals
-  function createBoard() {
-    boardCells = [];
-    
-    // Board base - wooden table
-    const boardGeometry = new THREE.BoxGeometry(8, 0.5, 8);
-    const boardMaterial = new THREE.MeshStandardMaterial({ 
-      color: 0x8B4513,
-      roughness: 0.8,
-      metalness: 0.1
-    });
-    const board = new THREE.Mesh(boardGeometry, boardMaterial);
-    board.position.y = -0.25;
-    board.receiveShadow = true;
-    scene.add(board);
-
-    // Create 9 cells
-    for (let i = 0; i < 9; i++) {
-      const row = Math.floor(i / 3);
-      const col = i % 3;
-      
-      // Cell geometry
-      const cellGeometry = new THREE.PlaneGeometry(1.8, 1.8);
-      const cellMaterial = new THREE.MeshStandardMaterial({ 
-        color: 0xF5DEB3,
-        roughness: 0.7,
-        metalness: 0.2,
-        transparent: true,
-        opacity: 0.9
-      });
-      const cell = new THREE.Mesh(cellGeometry, cellMaterial);
-      
-      // Position the cell
-      cell.position.set(
-        (col - 1) * 2,
-        0.26,
-        (row - 1) * 2
-      );
-      cell.rotation.x = -Math.PI / 2;
-      cell.userData = { index: i, occupied: false };
-      cell.receiveShadow = true;
-      
-      scene.add(cell);
-      boardCells.push(cell);
-    }
-
-    // Grid lines - 3D bars instead of lines
-    const lineMaterial = new THREE.MeshStandardMaterial({ 
-      color: 0x8B4513,
-      roughness: 0.7,
-      metalness: 0.3
-    });
-    
-    // Vertical lines
-    for (let i = 1; i <= 2; i++) {
-      const lineGeometry = new THREE.BoxGeometry(0.2, 0.3, 6.2);
-      const line = new THREE.Mesh(lineGeometry, lineMaterial);
-      line.position.set((i - 1.5) * 2, 0.15, 0);
-      line.receiveShadow = true;
-      scene.add(line);
-    }
-
-    // Horizontal lines
-    for (let i = 1; i <= 2; i++) {
-      const lineGeometry = new THREE.BoxGeometry(6.2, 0.3, 0.2);
-      const line = new THREE.Mesh(lineGeometry, lineMaterial);
-      line.position.set(0, 0.15, (i - 1.5) * 2);
-      line.receiveShadow = true;
-      scene.add(line);
-    }
-  }
-
-  // Create 3D X piece with improved appearance
-  function createXPiece(position) {
+  // Create 3D X piece
+  function createXPiece(position, faceIndex) {
     const group = new THREE.Group();
-    
-    // Create two crossed bars with better materials
-    const barGeometry = new THREE.BoxGeometry(2, 0.2, 0.2);
-    const xMaterial = new THREE.MeshStandardMaterial({ 
+
+    const barGeometry = new THREE.BoxGeometry(0.6, 0.1, 0.1);
+    const xMaterial = new THREE.MeshStandardMaterial({
       color: 0xFF4444,
       roughness: 0.3,
       metalness: 0.7,
       emissive: 0x440000
     });
-    
+
     const bar1 = new THREE.Mesh(barGeometry, xMaterial);
-    bar1.rotation.y = Math.PI / 4;
+    bar1.rotation.z = Math.PI / 4;
     bar1.castShadow = true;
-    
+
     const bar2 = new THREE.Mesh(barGeometry, xMaterial);
-    bar2.rotation.y = -Math.PI / 4;
+    bar2.rotation.z = -Math.PI / 4;
     bar2.castShadow = true;
-    
+
     group.add(bar1);
     group.add(bar2);
     group.position.copy(position);
-    group.position.y = 0.5;
-    
+    group.position.z += 0.05;
+
     return group;
   }
 
-  // Create 3D O piece with improved appearance
-  function createOPiece(position) {
+  // Create 3D O piece
+  function createOPiece(position, faceIndex) {
     const group = new THREE.Group();
-    
-    // Create torus (ring) with better materials
-    const torusGeometry = new THREE.TorusGeometry(0.7, 0.15, 16, 32);
-    const oMaterial = new THREE.MeshStandardMaterial({ 
+
+    const torusGeometry = new THREE.TorusGeometry(0.25, 0.05, 8, 16);
+    const oMaterial = new THREE.MeshStandardMaterial({
       color: 0x4444FF,
       roughness: 0.3,
       metalness: 0.7,
       emissive: 0x000044
     });
-    
+
     const torus = new THREE.Mesh(torusGeometry, oMaterial);
-    torus.rotation.x = Math.PI / 2;
     torus.castShadow = true;
-    
+
     group.add(torus);
     group.position.copy(position);
-    group.position.y = 0.5;
-    
-    return group;
-  }
+    group.position.z += 0.05;
 
-  // Animate piece placement
-  function animatePiecePlacement(piece, targetX, targetZ) {
-    const startY = 5;
-    piece.position.y = startY;
-    piece.position.x = targetX;
-    piece.position.z = targetZ;
-    
-    let progress = 0;
-    const duration = 15; // frames
-    
-    const animate = () => {
-      if (progress < duration) {
-        progress++;
-        const t = progress / duration;
-        
-        // Quadratic ease out for smooth landing
-        const easeT = t * (2 - t);
-        
-        // Calculate position
-        const currentY = startY - (startY - 0.5) * easeT;
-        
-        piece.position.y = currentY;
-        
-        requestAnimationFrame(animate);
-      } else {
-        piece.position.y = 0.5;
-        
-        // Add a slight bounce effect at the end
-        setTimeout(() => {
-          piece.position.y = 0.55;
-          setTimeout(() => {
-            piece.position.y = 0.5;
-          }, 50);
-        }, 50);
-      }
-    };
-    
-    animate();
+    return group;
   }
 
   // Handle canvas click
   function onCanvasClick(event) {
+    // Ignore if a touch tap already handled the interaction
+    if (lastTouchWasTap) return;
+    // Don't process clicks during drag
+    if (isDragging) return;
     handleInteraction(event.clientX, event.clientY);
   }
 
-  // Handle canvas touch
-  function onCanvasTouch(event) {
-    event.preventDefault();
-    if (event.touches.length === 1) {
-      const touch = event.touches[0];
-      handleInteraction(touch.clientX, touch.clientY);
-    }
-  }
-
-  // Handle interaction (click or touch)
+  // Handle interaction
   function handleInteraction(clientX, clientY) {
     if (!gameState || !gameActive || gameState.status !== 'active' || !isSceneReady) return;
     if (gameState.turn !== currentUsername) return;
 
-    // Calculate mouse position in normalized device coordinates
     const rect = canvas.getBoundingClientRect();
     mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
     mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
 
-    // Raycast
     raycaster.setFromCamera(mouse, camera);
-    const intersects = raycaster.intersectObjects(boardCells);
+
+    // Get all face cells for raycasting
+    const allCells = [];
+    cubeFaces.forEach(face => {
+      allCells.push(...face);
+    });
+
+    const intersects = raycaster.intersectObjects(allCells);
 
     if (intersects.length > 0) {
       const cell = intersects[0].object;
       if (!cell.userData.occupied) {
-        const index = cell.userData.index;
-        const row = Math.floor(index / 3);
-        const col = index % 3;
-        const position = new THREE.Vector3(
-          (col - 1) * 2,
-          0,
-          (row - 1) * 2
-        );
+        const faceIndex = cell.userData.faceIndex;
+        const cellIndex = cell.userData.cellIndex;
 
-        // Create a temporary piece for animation
-        let piece;
-        if (getPlayerSymbol(currentUsername) === 'X') {
-          piece = createXPiece(position);
-        } else {
-          piece = createOPiece(position);
-        }
-        
-        scene.add(piece);
-        animatePiecePlacement(piece, (col - 1) * 2, (row - 1) * 2);
-        
         // Send move to server
         sendMessage({
           type: 'makeMove',
           data: {
             username: currentUsername,
-            position: index,
+            position: { face: faceIndex, cell: cellIndex },
             gameType: 'tictactoe'
           }
         });
@@ -429,47 +434,59 @@
 
   // Update 3D scene based on game state
   function updateScene() {
-    if (!gameState || !isSceneReady) return;
+    if (!gameState || !isSceneReady || !gameState.tictactoe) return;
 
     // Clear existing pieces
     gamePieces.forEach(piece => {
-      scene.remove(piece);
+      const parent = piece.parent;
+      if (parent) parent.remove(piece);
     });
     gamePieces = [];
 
     // Reset cell states
-    boardCells.forEach(cell => {
-      cell.userData.occupied = false;
-      cell.material.color.setHex(0xF5DEB3);
+    cubeFaces.forEach(face => {
+      face.forEach(cell => {
+        cell.userData.occupied = false;
+        cell.material.color.setHex(0x2a2a3a);
+        cell.material.opacity = 0.8;
+      });
     });
 
     // Add pieces based on game state
-    gameState.tictactoe.forEach((cell, index) => {
-      if (cell) {
-        const row = Math.floor(index / 3);
-        const col = index % 3;
-        const position = new THREE.Vector3(
-          (col - 1) * 2,
-          0,
-          (row - 1) * 2
-        );
+    gameState.tictactoe.faces.forEach((face, faceIndex) => {
+      face.forEach((cell, cellIndex) => {
+        if (cell && cubeFaces[faceIndex] && cubeFaces[faceIndex][cellIndex]) {
+          const cellMesh = cubeFaces[faceIndex][cellIndex];
+          const position = cellMesh.position.clone();
 
-        let piece;
-        if (getPlayerSymbol(cell) === 'X') {
-          piece = createXPiece(position);
-        } else {
-          piece = createOPiece(position);
+          let piece;
+          if (getPlayerSymbol(cell) === 'X') {
+            piece = createXPiece(position, faceIndex);
+          } else {
+            piece = createOPiece(position, faceIndex);
+          }
+
+          // Add piece to the same parent as the cell (the face group)
+          cellMesh.parent.add(piece);
+          gamePieces.push(piece);
+
+          cellMesh.userData.occupied = true;
+          cellMesh.material.color.setHex(0x444444);
+          cellMesh.material.opacity = 0.6;
         }
-
-        scene.add(piece);
-        gamePieces.push(piece);
-        boardCells[index].userData.occupied = true;
-        boardCells[index].material.color.setHex(0xDDDDDD);
-      }
+      });
     });
+
+    // Update cube rotation from game state
+    if (gameState.tictactoe.cubeRotation) {
+      cubeRotation = { ...gameState.tictactoe.cubeRotation };
+      if (gameCube) {
+        gameCube.rotation.set(cubeRotation.x, cubeRotation.y, cubeRotation.z);
+      }
+    }
   }
 
-  // Get player symbol (X for first player, O for second)
+  // Get player symbol
   function getPlayerSymbol(username) {
     if (!gameState || !gameState.players) return username;
     const playerIndex = gameState.players.indexOf(username);
@@ -479,7 +496,7 @@
   // Animation loop
   function animate() {
     requestAnimationFrame(animate);
-    
+
     if (isSceneReady) {
       renderer.render(scene, camera);
     }
@@ -488,13 +505,13 @@
   // Handle window resize
   function onWindowResize() {
     if (!isSceneReady) return;
-    
+
     camera.aspect = canvas.clientWidth / canvas.clientHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(canvas.clientWidth, canvas.clientHeight);
   }
 
-  // Auto-refresh game state every 3 seconds
+  // Auto-refresh game state
   function startAutoRefresh() {
     if (refreshInterval) clearInterval(refreshInterval);
     refreshInterval = setInterval(() => {
@@ -513,16 +530,16 @@
     }, 1000);
   }
 
-  // Show win/loss modal
+  // Show game end modal
   function showGameEndModal(winner, isDraw, reason) {
     const modal = document.createElement('div');
     modal.className = 'modal';
-    
+
     let modalClass = '';
     let title = '';
     let message = '';
     let emoji = '';
-    
+
     if (isDraw) {
       modalClass = 'draw-modal';
       title = "It's a Draw! 🤝";
@@ -531,17 +548,21 @@
     } else if (winner === currentUsername) {
       modalClass = 'win-modal celebration';
       title = "🎉 Congratulations! 🎉";
-      message = `You won! Excellent strategy and gameplay!`;
+      const facesWon = gameState?.tictactoe?.facesWon?.[winner] || 0;
+      message = `You won ${facesWon} faces! Master of the cube!`;
       emoji = '🏆';
     } else {
       modalClass = 'lose-modal';
       title = "Game Over 😔";
-      message = reason === 'timeout' 
-        ? `Time's up! ${winner} wins by timeout.`
-        : `${winner} wins! Better luck next time.`;
+      if (reason === 'timeout') {
+        message = `Time's up! ${winner} wins by timeout.`;
+      } else {
+        const facesWon = gameState?.tictactoe?.facesWon?.[winner] || 0;
+        message = `${winner} won ${facesWon} faces! Better luck next time.`;
+      }
       emoji = '😔';
     }
-    
+
     modal.innerHTML = `
       <div class="modal-content ${modalClass}">
         <h2>${emoji} ${title} ${emoji}</h2>
@@ -551,10 +572,9 @@
         </button>
       </div>
     `;
-    
+
     document.body.appendChild(modal);
-    
-    // Auto-remove after 5 seconds
+
     setTimeout(() => {
       if (modal.parentNode) {
         modal.remove();
@@ -577,10 +597,15 @@
     } else if (gameState.status === 'active') {
       const isMyTurn = gameState.turn === currentUsername;
       const turnSymbol = getPlayerSymbol(gameState.turn);
-      statusElem.textContent = isMyTurn 
-        ? `🎯 Your turn (${turnSymbol})` 
-        : `⏳ ${gameState.turn}'s turn (${turnSymbol})`;
-      
+      const myFaces = gameState.tictactoe?.facesWon?.[currentUsername] || 0;
+      const opponentFaces = gameState.players
+        .filter(p => p !== currentUsername)
+        .reduce((max, p) => Math.max(max, gameState.tictactoe?.facesWon?.[p] || 0), 0);
+
+      statusElem.textContent = isMyTurn
+        ? `🎯 Your turn (${turnSymbol}) - Faces: You ${myFaces}, Opponent ${opponentFaces}`
+        : `⏳ ${gameState.turn}'s turn (${turnSymbol}) - Faces: You ${myFaces}, Opponent ${opponentFaces}`;
+
       if (isMyTurn) {
         statusElem.style.background = 'rgba(40, 167, 69, 0.95)';
         statusElem.style.color = 'white';
@@ -590,10 +615,11 @@
       }
     } else if (gameState.status === 'finished') {
       const winnerSymbol = getPlayerSymbol(gameState.winner);
-      statusElem.textContent = gameState.winner === currentUsername 
-        ? `🏆 You won! (${winnerSymbol})` 
-        : `😔 ${gameState.winner} won! (${winnerSymbol})`;
-      statusElem.style.background = gameState.winner === currentUsername 
+      const winnerFaces = gameState.tictactoe?.facesWon?.[gameState.winner] || 0;
+      statusElem.textContent = gameState.winner === currentUsername
+        ? `🏆 You won ${winnerFaces} faces! (${winnerSymbol})`
+        : `😔 ${gameState.winner} won ${winnerFaces} faces! (${winnerSymbol})`;
+      statusElem.style.background = gameState.winner === currentUsername
         ? 'rgba(40, 167, 69, 0.95)'
         : 'rgba(220, 53, 69, 0.95)';
       statusElem.style.color = 'white';
@@ -607,12 +633,12 @@
   // Update timer display
   function updateTimer(timeRemaining, currentTurn) {
     if (!timerElem) return;
-    
+
     if (gameState && gameState.status === 'active' && gameState.players.length >= 2 && gameState.firstMoveMade) {
       timerElem.style.display = 'block';
       timerElem.className = 'timer-display-3d';
       timerElem.textContent = `⏰ ${timeRemaining}s - ${currentTurn}'s turn`;
-      
+
       if (timeRemaining <= 10) {
         timerElem.style.background = 'rgba(220, 53, 69, 0.95)';
       } else {
@@ -626,16 +652,17 @@
   // Update players info
   function updatePlayersInfo() {
     if (!gameState || !playersElem) return;
-    
+
     playersElem.className = 'status-display-3d';
-    
+
     if (gameState.players.length === 0) {
       playersElem.textContent = '👥 No players yet';
     } else {
       const playersList = gameState.players.map((player, index) => {
         const symbol = index === 0 ? 'X' : 'O';
+        const faces = gameState.tictactoe?.facesWon?.[player] || 0;
         const isCurrent = player === currentUsername;
-        return `${player} (${symbol})${isCurrent ? ' - You' : ''}`;
+        return `${player} (${symbol}, ${faces} faces)${isCurrent ? ' - You' : ''}`;
       }).join(', ');
       playersElem.textContent = `👥 Players: ${playersList}`;
     }
@@ -647,7 +674,7 @@
     if (message.type === 'devvit-message' && message.data && message.data.message) {
       message = message.data.message;
     }
-    
+
     switch (message.type) {
       case 'initialData':
         currentUsername = message.data.username;
@@ -661,7 +688,7 @@
         updateScene();
         updateStatus();
         updatePlayersInfo();
-        
+
         if (!gameState.players.includes(currentUsername)) {
           sendMessage({
             type: 'joinGame',
@@ -681,7 +708,7 @@
           updateScene();
           updateStatus();
           updatePlayersInfo();
-          
+
           if (gameActive && gameState.players.includes(currentUsername)) {
             startAutoRefresh();
             startTurnTimer();
@@ -697,7 +724,7 @@
           updateStatus();
           updatePlayersInfo();
         }
-        
+
         if (gameActive && gameState && gameState.players.includes(currentUsername)) {
           startAutoRefresh();
           startTurnTimer();
@@ -727,14 +754,14 @@
         gameActive = false;
         if (refreshInterval) clearInterval(refreshInterval);
         if (timerInterval) clearInterval(timerInterval);
-        
+
         if (message.data.finalState) {
           gameState = message.data.finalState;
           updateScene();
           updateStatus();
           updatePlayersInfo();
         }
-        
+
         setTimeout(() => {
           showGameEndModal(message.data.winner, message.data.isDraw, message.data.reason);
         }, 500);
@@ -751,7 +778,7 @@
 
   // Add event listeners
   window.addEventListener('message', handleMessage);
-  document.addEventListener('DOMContentLoaded', () {
+  document.addEventListener('DOMContentLoaded', () => {
     sendMessage({ type: 'webViewReady' });
   });
 
@@ -766,6 +793,5 @@
     initThreeJS();
   }
 
-  // Make sendMessage available globally for modal buttons
   window.sendMessage = sendMessage;
 })();
