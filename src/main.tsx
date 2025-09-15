@@ -8,6 +8,48 @@ Devvit.configure({
   redis: true,
 });
 
+// Track active webview connections per post
+const activeConnections = new Map<string, Set<any>>();
+
+// Broadcast game state to all connected webviews for a post
+function broadcastGameState(postId: string, gameState: any, excludeWebView?: any) {
+  const connections = activeConnections.get(postId);
+  if (connections) {
+    connections.forEach(webView => {
+      if (webView !== excludeWebView) {
+        try {
+          webView.postMessage({
+            type: 'gameState',
+            data: gameState,
+          });
+        } catch (error) {
+          // Remove dead connections
+          connections.delete(webView);
+        }
+      }
+    });
+  }
+}
+
+// Register webview connection
+function registerConnection(postId: string, webView: any) {
+  if (!activeConnections.has(postId)) {
+    activeConnections.set(postId, new Set());
+  }
+  activeConnections.get(postId)!.add(webView);
+}
+
+// Unregister webview connection
+function unregisterConnection(postId: string, webView: any) {
+  const connections = activeConnections.get(postId);
+  if (connections) {
+    connections.delete(webView);
+    if (connections.size === 0) {
+      activeConnections.delete(postId);
+    }
+  }
+}
+
 // Add a custom post type for Multiplayer Games.
 Devvit.addCustomPostType({
   name: 'SocialGrid Games',
@@ -48,6 +90,8 @@ Devvit.addCustomPostType({
           return 'index_tictactoe.html';
         case 'gomoku':
           return 'index_gomoku.html';
+        case 'dots':
+          return 'index_dots.html';
         case 'connect4':
           return 'index_connect4.html';
         case 'chess':
@@ -74,6 +118,9 @@ Devvit.addCustomPostType({
                 case 'webViewReady':
                   // console.log('WebView ready, sending initial data...');
                   
+                  // Register this webview connection
+                  registerConnection(postId, webView);
+                  
                   // Send initial data to webview
                   webView.postMessage({
                     type: 'initialData',
@@ -90,7 +137,7 @@ Devvit.addCustomPostType({
                   // console.log(`Initializing ${selectedGame} game...`);
                   
                   try {
-                    // Initialize game state if it doesn't exist
+                    // Always get fresh game state from Redis
                     let gameState = await GameAPI.getGameState(redis, postId);
                     
                     // If no game exists or wrong game type, initialize new game
@@ -102,11 +149,14 @@ Devvit.addCustomPostType({
                       // console.log('Game initialized:', gameState);
                     }
 
-                    // Send current game state
+                    // Send current game state to this webview
                     webView.postMessage({
                       type: 'gameState',
                       data: gameState,
                     });
+                    
+                    // Broadcast to other connected webviews
+                    broadcastGameState(postId, gameState, webView);
                   } catch (error) {
                     // console.error('Error initializing game:', error);
                     webView.postMessage({
@@ -120,10 +170,11 @@ Devvit.addCustomPostType({
                 }
 
                 case 'joinGame': {
-                  // console.log(`Player ${username} attempting to join game`);
+                  console.log(`Player ${username} attempting to join game`);
                   
                   try {
-                    const gameState = await GameAPI.getGameState(redis, postId);
+                    // Always get fresh game state from Redis before processing join
+                    let gameState = await GameAPI.getGameState(redis, postId);
                     
                     // Check if player is already in the game
                     if (gameState.players.includes(username)) {
@@ -145,6 +196,9 @@ Devvit.addCustomPostType({
                           gameState,
                         },
                       });
+                      
+                      // Broadcast to other connected webviews
+                      broadcastGameState(postId, gameState, webView);
                       return;
                     }
 
@@ -159,31 +213,12 @@ Devvit.addCustomPostType({
                       return;
                     }
 
-                    // Add player to the game
-                    gameState.players.push(username);
-                    
-                    // Set first player as the starting turn
-                    if (gameState.players.length === 1) {
-                      gameState.turn = username;
-                    }
-
-                    // Check if we have enough players to start
-                    if (gameState.players.length >= 2 && gameState.status === 'waiting') {
-                      gameState.status = 'active';
-                      gameState.turn = gameState.players[0]; // First player starts
-                      // Don't start timer until first move is made
-                    }
-
-                    // For reaction game, start immediately with 1 player
-                    if (gameState.currentGame === 'reaction' && gameState.status === 'waiting') {
-                      gameState.status = 'active';
-                    }
-
-                    await GameAPI.saveGameState(redis, postId, gameState);
+                    // Use GameAPI.joinGame for proper state management
+                    gameState = await GameAPI.joinGame(redis, postId, username);
 
                     // console.log(`Player ${username} joined. Players: ${gameState.players.length}/${gameState.maxPlayers}`);
 
-                    // Send updated game state
+                    // Send updated game state to this webview
                     webView.postMessage({
                       type: 'playerJoined',
                       data: {
@@ -205,8 +240,11 @@ Devvit.addCustomPostType({
                         },
                       });
                     }
+                    
+                    // Broadcast to all connected webviews
+                    broadcastGameState(postId, gameState, webView);
                   } catch (error) {
-                    // console.error('Error joining game:', error);
+                    console.error('Error joining game:', error);
                     webView.postMessage({
                       type: 'error',
                       code: 500,
@@ -222,7 +260,8 @@ Devvit.addCustomPostType({
                   
                   try {
                     const { position, gameType, username: moveUsername } = message.data;
-                    const gameState = await GameAPI.getGameState(redis, postId);
+                    // Always get fresh game state from Redis
+                    let gameState = await GameAPI.getGameState(redis, postId);
 
                     // Validate player is in the game
                     if (!gameState.players.includes(moveUsername || username)) {
@@ -268,53 +307,56 @@ Devvit.addCustomPostType({
                       },
                     };
 
-                    const newState = await GameAPI.processMove(redis, postId, action);
+                    gameState = await GameAPI.processMove(redis, postId, action);
                     
 
                     /* console.log(`Move processed. New state:`, {
-                      turn: newState.turn,
-                      status: newState.status,
-                      winner: newState.winner
+                      turn: gameState.turn,
+                      status: gameState.status,
+                      winner: gameState.winner
                     });
 */
-                    // Send updated game state
+                    // Send updated game state to this webview
                     webView.postMessage({
                       type: 'gameUpdate',
-                      data: newState,
+                      data: gameState,
                     });
 
-                    // Send move notification
+                    // Send move notification to this webview
                     webView.postMessage({
                       type: 'moveMade',
                       data: {
                         player: moveUsername || username,
                         position,
-                        gameState: newState,
+                        gameState: gameState,
                       },
                     });
 
                     // Notify about turn change if game is still active
-                    if (newState.status === 'active') {
+                    if (gameState.status === 'active') {
                       webView.postMessage({
                         type: 'turnChanged',
                         data: {
-                          currentTurn: newState.turn,
-                          nextPlayer: newState.turn,
+                          currentTurn: gameState.turn,
+                          nextPlayer: gameState.turn,
                         },
                       });
                     }
 
                     // Notify if game ended
-                    if (newState.status === 'finished' || newState.status === 'draw') {
+                    if (gameState.status === 'finished' || gameState.status === 'draw') {
                       webView.postMessage({
                         type: 'gameEnded',
                         data: {
-                          winner: newState.winner,
-                          isDraw: newState.status === 'draw',
-                          finalState: newState,
+                          winner: gameState.winner,
+                          isDraw: gameState.status === 'draw',
+                          finalState: gameState,
                         },
                       });
                     }
+                    
+                    // Broadcast to all connected webviews
+                    broadcastGameState(postId, gameState, webView);
                   } catch (error) {
                     // console.error('Error making move:', error);
                     webView.postMessage({
@@ -329,7 +371,8 @@ Devvit.addCustomPostType({
 
                 case 'checkTurnTimer': {
                   try {
-                    const gameState = await GameAPI.getGameState(redis, postId);
+                    // Always get fresh game state from Redis
+                    let gameState = await GameAPI.getGameState(redis, postId);
                     
                     // Only check timer for 2-player games that are active and first move made
                     if (gameState.currentGame === 'reaction' || gameState.status !== 'active' || gameState.players.length < 2 || !gameState.firstMoveMade) {
@@ -352,6 +395,7 @@ Devvit.addCustomPostType({
                       
                       await GameAPI.saveGameState(redis, postId, gameState);
                       
+                      // Send to this webview
                       webView.postMessage({
                         type: 'gameEnded',
                         data: {
@@ -361,6 +405,9 @@ Devvit.addCustomPostType({
                           reason: 'timeout'
                         },
                       });
+                      
+                      // Broadcast to all connected webviews
+                      broadcastGameState(postId, gameState, webView);
                     } else {
                       // Send timer update
                       webView.postMessage({
@@ -385,13 +432,16 @@ Devvit.addCustomPostType({
                     const gameType = selectedGame as any;
                     const maxPlayers = gameType === 'reaction' ? 10 : 2;
                     await GameAPI.initializeGame(redis, postId, gameType, maxPlayers);
-                    const gameState = await GameAPI.getGameState(redis, postId);
+                    let gameState = await GameAPI.getGameState(redis, postId);
                     
-                    // Send new game state
+                    // Send new game state to this webview
                     webView.postMessage({
                       type: 'gameState',
                       data: gameState,
                     });
+                    
+                    // Broadcast to all connected webviews
+                    broadcastGameState(postId, gameState, webView);
                   } catch (error) {
                     // console.error('Error restarting game:', error);
                     webView.postMessage({
@@ -406,7 +456,8 @@ Devvit.addCustomPostType({
 
                 case 'requestGameState': {
                   try {
-                    const gameState = await GameAPI.getGameState(redis, postId);
+                    // Always get fresh game state from Redis
+                    let gameState = await GameAPI.getGameState(redis, postId);
                     webView.postMessage({
                       type: 'gameState',
                       data: gameState,
@@ -443,7 +494,7 @@ Devvit.addCustomPostType({
                     
                     await redis.set(`reaction_scores_${postId}`, JSON.stringify(scores));
                     
-                    // Send score update
+                    // Send score update to this webview
                     webView.postMessage({
                       type: 'scoreUpdate',
                       data: { 
@@ -451,6 +502,26 @@ Devvit.addCustomPostType({
                         newScore: scoreData,
                       },
                     });
+                    
+                    // Broadcast score update to other connected webviews
+                    const connections = activeConnections.get(postId);
+                    if (connections) {
+                      connections.forEach(otherWebView => {
+                        if (otherWebView !== webView) {
+                          try {
+                            otherWebView.postMessage({
+                              type: 'scoreUpdate',
+                              data: { 
+                                scores,
+                                newScore: scoreData,
+                              },
+                            });
+                          } catch (error) {
+                            connections.delete(otherWebView);
+                          }
+                        }
+                      });
+                    }
                   } catch (error) {
                     // console.error('Error updating score:', error);
                     webView.postMessage({
@@ -503,6 +574,8 @@ Devvit.addCustomPostType({
                 }
 
                 case 'unmount':
+                  // Unregister this webview connection
+                  unregisterConnection(postId, webView);
                   webView.unmount();
                   break;
 
@@ -520,6 +593,8 @@ Devvit.addCustomPostType({
             }
           },
           onUnmount() {
+            // Unregister this webview connection
+            unregisterConnection(context.postId!, webView);
             context.ui.showToast('Web view closed!');
           },
         })
@@ -620,6 +695,19 @@ Devvit.addCustomPostType({
                     </button>
                     <button
                       appearance="primary"
+                      onPress={() => setSelectedGame('dots')}
+                      size="large"
+                      textColor="#ffffff"
+                      backgroundColor="#9B59B6"
+                      cornerRadius="medium"
+                      shadow="0px 3px 8px rgba(155, 89, 182, 0.3)"
+                    >
+                      📦 Dots & Boxes (2P)
+                    </button>
+                  </hstack>
+                  <hstack gap="medium" width="100%" alignment="center middle">
+                    <button
+                      appearance="primary"
                       onPress={() => setSelectedGame('chess')}
                       size="large"
                       textColor="#ffffff"
@@ -629,8 +717,6 @@ Devvit.addCustomPostType({
                     >
                       ♛ Chess (2P)
                     </button>
-                  </hstack>
-                  <hstack gap="medium" width="100%" alignment="center middle">
                     <button
                       appearance="primary"
                       onPress={() => setSelectedGame('reaction')}

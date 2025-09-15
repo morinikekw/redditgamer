@@ -44,6 +44,9 @@
   let ChessCtor = (typeof window !== 'undefined' && window.Chess) ? window.Chess : null;
   let clientChess = null;
 
+  // store last legal moves requested from server keyed by 'from'
+  const lastLegalMoves = {}; // { from: [{from,to,promotion}], ... }
+
   // constants & helpers
   const DEFAULT_STARTING_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
   const files = 'abcdefgh';
@@ -231,12 +234,38 @@
     let o = obj; while (o && !o.userData.type) o = o.parent; return o || obj;
   }
 
-  function computeLegalMovesFor(fromNotation) {
-    if (!clientChess) return [];
-    try {
-      const verbose = clientChess.moves({ verbose: true }) || [];
-      return verbose.filter(m => m.from === fromNotation);
-    } catch (err) { console.warn('computeLegalMovesFor error', err); return []; }
+  // compute legal moves — either from local Chess.js (if available) or request from server
+  function computeLegalMovesFor(fromNotation, callback) {
+    // If clientChess available and can compute moves instantly, use it
+    if (clientChess && typeof clientChess.moves === 'function') {
+      try {
+        const verbose = clientChess.moves({ verbose: true }) || [];
+        const filtered = verbose.filter(m => m.from === fromNotation);
+        lastLegalMoves[fromNotation] = filtered;
+        if (callback) callback(filtered);
+        return filtered;
+      } catch (err) {
+        console.warn('computeLegalMovesFor (client) error', err);
+      }
+    }
+
+    // If we already asked server for this "from" and have a cached result, return it immediately
+    if (lastLegalMoves[fromNotation]) {
+      if (callback) callback(lastLegalMoves[fromNotation]);
+      return lastLegalMoves[fromNotation];
+    }
+
+    // Otherwise ask the host/server for legal moves and set a callback to apply when answer arrives.
+    sendMessage({
+      type: 'requestLegalMoves',
+      data: {
+        from: fromNotation,
+        postId: (gameState && gameState.postId) ? gameState.postId : undefined
+      }
+    });
+
+    // Caller must rely on the 'legalMoves' message to invoke applyLegalMoves when available.
+    return [];
   }
 
   function resetAllSquareColors() {
@@ -263,8 +292,10 @@
     piece.userData.isSelected = true;
     piece.position.y = 0.7;
     const from = coordsToNotation(piece.userData.boardRow, piece.userData.boardCol);
-    const legal = computeLegalMovesFor(from);
-    applyLegalMoves(legal);
+    // compute legal moves (local or request server)
+    computeLegalMovesFor(from, (moves) => {
+      applyLegalMoves(moves);
+    });
     sendMessage({ type: 'clientSelectedPiece', data: { from, postId: (gameState && gameState.postId) ? gameState.postId : undefined } });
   }
 
@@ -304,12 +335,19 @@
 
   // --- move handling (local + send) ---
   function performLocalMoveAndSend(from, to, promotion) {
-    if (clientChess) {
-      const mv = { from, to }; if (promotion) mv.promotion = promotion;
-      const result = clientChess.move(mv);
-      if (!result) { if (selectedPiece) animateShake(selectedPiece); clearSelectionHighlights(); return; }
+    // optimistic local update: update clientChess if available and animate; server is authoritative
+    if (clientChess && typeof clientChess.move === 'function') {
+      try {
+        const mv = { from, to }; if (promotion) mv.promotion = promotion;
+        const result = clientChess.move(mv);
+        if (!result) { if (selectedPiece) animateShake(selectedPiece); clearSelectionHighlights(); return; }
+      } catch (err) {
+        console.warn('clientChess.move failed', err);
+      }
     }
+
     const destCoords = notationToCoords(to);
+    if (!destCoords) { clearSelectionHighlights(); return; }
     const movedPiece = selectedPiece;
     const captured = findPieceOnSquare(destCoords.row, destCoords.col);
     if (captured && captured !== movedPiece) {
@@ -320,7 +358,7 @@
         else requestAnimationFrame(fade);
       })();
     }
-    movedPiece.userData.boardRow = destCoords.row; movedPiece.userData.boardCol = destCoords.col;
+    if (movedPiece) movedPiece.userData.boardRow = destCoords.row, movedPiece.userData.boardCol = destCoords.col;
     animatePieceTo(movedPiece, destCoords.row, destCoords.col, true, 260, () => {
       clearSelectionHighlights();
       highlightLastMove({ from, to });
@@ -341,10 +379,24 @@
     const fromNotation = coordsToNotation(selectedPiece.userData.boardRow, selectedPiece.userData.boardCol);
     const toNotation = coordsToNotation(destRow, destCol);
     if (!fromNotation || !toNotation) { clearSelectionHighlights(); return; }
-    if (!clientChess) { performLocalMoveAndSend(fromNotation, toNotation); return; }
-    const legal = computeLegalMovesFor(fromNotation);
+
+    // get legal moves either from cached lastLegalMoves or compute local
+    const legal = lastLegalMoves[fromNotation] || (clientChess && clientChess.moves ? (clientChess.moves({ verbose: true }) || []).filter(m => m.from === fromNotation) : []);
     const match = legal.find(m => m.from === fromNotation && m.to === toNotation);
-    if (!match) { animateShake(selectedPiece); setTimeout(() => clearSelectionHighlights(), 200); return; }
+    if (!match) {
+      // if we don't have local legal moves and server hasn't answered yet, request server and bail
+      if (!lastLegalMoves[fromNotation]) {
+        // Ask server for moves and wait for reply (user should click again)
+        computeLegalMovesFor(fromNotation, (moves) => { /* applied when legalMoves arrives */ });
+        animateShake(selectedPiece);
+        setTimeout(() => clearSelectionHighlights(), 300);
+        return;
+      }
+      animateShake(selectedPiece);
+      setTimeout(() => clearSelectionHighlights(), 200);
+      return;
+    }
+
     const isPromotion = match.promotion || (selectedPiece.userData.type === 'pawn' && (destRow === 0 || destRow === 7));
     if (isPromotion && !match.promotion) {
       showPromotionPicker(chosen => performLocalMoveAndSend(fromNotation, toNotation, chosen));
@@ -369,19 +421,27 @@
   // --- update scene from server state ---
   function updateSceneFromGameState() {
     if (!isSceneReady || !gameState) return;
-    // sync local engine and visuals
+
+    // Always sync local engine with server state if possible
     if (gameState.chess && gameState.chess.fen) {
       try {
-        if (!clientChess && ChessCtor) clientChess = new ChessCtor(gameState.chess.fen);
-        else if (clientChess && clientChess.fen() !== gameState.chess.fen) clientChess.load(gameState.chess.fen);
-      } catch (e) { console.warn('clientChess sync failed', e); }
+        if (ChessCtor) clientChess = new ChessCtor(gameState.chess.fen);
+      } catch (e) {
+        console.warn('clientChess sync failed', e);
+        try {
+          if (ChessCtor) clientChess = new ChessCtor(DEFAULT_STARTING_FEN);
+        } catch (e2) { console.error('Failed to create fallback chess instance', e2); }
+      }
       placePiecesFromFEN(gameState.chess.fen);
       highlightLastMove((gameState.chess && gameState.chess.lastMove) ? gameState.chess.lastMove : null);
+      // clear legal moves cache when server state changes (to avoid stale move lists)
+      for (const k in lastLegalMoves) delete lastLegalMoves[k];
     } else {
+      try { if (ChessCtor) clientChess = new ChessCtor(DEFAULT_STARTING_FEN); } catch (e) {}
       placePiecesFromFEN(DEFAULT_STARTING_FEN);
     }
+
     gameActive = gameState.status === 'active';
-    // ensure a valid top-level turn username exists so UI & checks won't see empty string
     ensureTurnMappingFromChess();
     updateStatus();
   }
@@ -431,20 +491,12 @@
   // --- CRITICAL: ensure top-level gameState.turn is set to a username ---
   function ensureTurnMappingFromChess() {
     if (!gameState) return;
-    // If already set and non-empty, nothing to do
     if (gameState.turn && typeof gameState.turn === 'string' && gameState.turn.length > 0) return;
-
-    // If chess state provides side to move and playersColor map, map color -> username
     if (gameState.chess && gameState.chess.turn && gameState.chess.playersColor) {
-      const sideToMove = gameState.chess.turn; // 'white'|'black'
+      const sideToMove = gameState.chess.turn;
       const entry = Object.entries(gameState.chess.playersColor).find(([, c]) => c === sideToMove);
-      if (entry && entry[0]) {
-        gameState.turn = entry[0];
-        return;
-      }
+      if (entry && entry[0]) { gameState.turn = entry[0]; return; }
     }
-
-    // If no mapping available, fallback to players[0] if present
     if (Array.isArray(gameState.players) && gameState.players.length > 0) {
       gameState.turn = gameState.players[0];
     }
@@ -509,27 +561,22 @@
         currentUsername = (message.data && message.data.username) || currentUsername;
         if (currentUsername) addPlayerLocally(currentUsername);
         if (currentUsername) sendMessage({ type: 'joinGame', data: { username: currentUsername } });
-        sendMessage({ type: 'requestGameState' });
         break;
 
       case 'playerJoined':
         if (message.data && message.data.username) {
           addPlayerLocally(message.data.username);
-          sendMessage({ type: 'requestGameState' });
         } else if (message.data && message.data.gameState) {
           gameState = message.data.gameState;
           if (!Array.isArray(gameState.players)) gameState.players = gameState.players || [];
           setPlayersArray(gameState.players || []);
           updateSceneFromGameState();
-        } else {
-          sendMessage({ type: 'requestGameState' });
         }
         break;
 
       case 'playerLeft':
         if (message.data && message.data.username) {
           removePlayerLocally(message.data.username);
-          sendMessage({ type: 'requestGameState' });
         } else if (message.data && message.data.gameState) {
           gameState = message.data.gameState;
           if (!Array.isArray(gameState.players)) gameState.players = gameState.players || [];
@@ -548,12 +595,6 @@
         gameState = message.data || {};
         if (!Array.isArray(gameState.players)) gameState.players = gameState.players || [];
         setPlayersArray(gameState.players);
-        try {
-          if (ChessCtor && gameState.chess && gameState.chess.fen) {
-            if (!clientChess) clientChess = new ChessCtor(gameState.chess.fen);
-            else if (clientChess.fen() !== gameState.chess.fen) clientChess.load(gameState.chess.fen);
-          }
-        } catch (e) { console.warn('sync engine failed', e); }
         ensureTurnMappingFromChess();
         updateSceneFromGameState();
         updateStatus();
@@ -561,19 +602,29 @@
 
       case 'moveMade':
       case 'gameUpdate':
-        gameState = message.data.gameState || message.data || gameState;
+        gameState = (message.data && message.data.gameState) || message.data || gameState;
         if (!gameState) break;
         if (!Array.isArray(gameState.players)) gameState.players = gameState.players || [];
         setPlayersArray(gameState.players);
-        try {
-          if (ChessCtor && gameState.chess && gameState.chess.fen) {
-            if (!clientChess) clientChess = new ChessCtor(gameState.chess.fen);
-            else if (clientChess.fen() !== gameState.chess.fen) clientChess.load(gameState.chess.fen);
-          }
-        } catch (e) {}
         ensureTurnMappingFromChess();
         updateSceneFromGameState();
         updateStatus();
+        break;
+
+      case 'legalMoves':
+        // expected payload: { from: 'e2', moves: [{from:'e2',to:'e4',promotion:undefined}, ...], fen?: '...' }
+        if (message.data && message.data.from && Array.isArray(message.data.moves)) {
+          lastLegalMoves[message.data.from] = message.data.moves;
+          // If the user currently has that piece selected, apply highlights
+          if (selectedPiece) {
+            const curFrom = coordsToNotation(selectedPiece.userData.boardRow, selectedPiece.userData.boardCol);
+            if (curFrom === message.data.from) applyLegalMoves(message.data.moves);
+          }
+          // Optionally sync clientChess fen if provided
+          if (message.data.fen && ChessCtor) {
+            try { clientChess = new ChessCtor(message.data.fen); } catch (e) { /* ignore */ }
+          }
+        }
         break;
 
       case 'timerUpdate':
@@ -592,9 +643,19 @@
         break;
 
       case 'error':
+        // Handle move rejection - revert optimistic move
+        if (selectedPiece) {
+          animateShake(selectedPiece);
+          setTimeout(() => {
+            clearSelectionHighlights();
+            updateSceneFromGameState();
+          }, 300);
+        }
         if (statusElem) {
-          statusElem.textContent = `❌ Error: ${message.message || message.data || 'unknown'}`;
+          const errorMsg = message.message || (message.data && message.data.message) || 'unknown';
+          statusElem.textContent = `❌ ${errorMsg}`;
           statusElem.style.background = 'rgba(220,53,69,0.95)'; statusElem.style.color = 'white';
+          setTimeout(() => { updateStatus(); }, 3000);
         }
         break;
 
@@ -683,8 +744,8 @@
     if (currentUsername) {
       sendMessage({ type: 'joinGame', data: { username: currentUsername } });
       addPlayerLocally(currentUsername);
+      sendMessage({ type: 'requestGameState' });
     }
-    sendMessage({ type: 'requestGameState' });
   }
 
   if (restartBtn) restartBtn.addEventListener('click', ensureJoinedAndRequestState);
@@ -696,7 +757,11 @@
   else initThreeJS();
 
   // request authoritative state when tab becomes visible (helps stale clients)
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) sendMessage({ type: 'requestGameState' }); });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && currentUsername) {
+      sendMessage({ type: 'requestGameState' });
+    }
+  });
 
   // expose debug helpers
   window.sendMessage = sendMessage;

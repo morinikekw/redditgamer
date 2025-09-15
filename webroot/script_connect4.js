@@ -605,7 +605,6 @@
         updateUI();
         if (!gameState.players.includes(currentUsername)) {
           sendMessage({ type: 'joinGame', data: { username: currentUsername } });
-          sendMessage({ type: 'requestGameState' });
         } else if (gameActive) {
           startAutoRefresh(); startTurnTimer();
         }
@@ -636,6 +635,10 @@
         break;
       case 'error':
         if (statusElem) { statusElem.textContent = `❌ Error: ${message.message}`; statusElem.style.background = 'rgba(220,53,69,0.95)'; statusElem.style.color = 'white'; }
+        // Clear error message after 3 seconds
+        setTimeout(() => {
+          updateUI();
+        }, 3000);
         break;
     }
   }
@@ -702,6 +705,12 @@
   document.addEventListener('DOMContentLoaded', () => sendMessage({ type: 'webViewReady' }));
   restartBtn && restartBtn.addEventListener('click', () => sendMessage({ type: 'restartGame' }));
 
+ // Request fresh game state when tab becomes visible (helps with reconnection)
+ document.addEventListener('visibilitychange', () => {
+   if (!document.hidden && currentUsername) {
+     sendMessage({ type: 'requestGameState' });
+   }
+ });
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initThreeJS);
   else initThreeJS();
 

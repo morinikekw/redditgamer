@@ -694,7 +694,6 @@
             type: 'joinGame',
             data: { username: currentUsername }
           });
-          sendMessage({ type: 'requestGameState' });
         } else if (gameActive) {
           startAutoRefresh();
           startTurnTimer();
@@ -772,6 +771,10 @@
         statusElem.className = 'status-display-3d';
         statusElem.style.background = 'rgba(220, 53, 69, 0.95)';
         statusElem.style.color = 'white';
+        // Clear error message after 3 seconds
+        setTimeout(() => {
+          updateStatus();
+        }, 3000);
         break;
     }
   }
@@ -782,6 +785,12 @@
     sendMessage({ type: 'webViewReady' });
   });
 
+ // Request fresh game state when tab becomes visible (helps with reconnection)
+ document.addEventListener('visibilitychange', () => {
+   if (!document.hidden && currentUsername) {
+     sendMessage({ type: 'requestGameState' });
+   }
+ });
   restartBtn.addEventListener('click', () => {
     sendMessage({ type: 'requestGameState' });
   });

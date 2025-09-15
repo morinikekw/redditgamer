@@ -756,6 +756,10 @@
           statusElem.textContent = `❌ Error: ${message.message || message.data}`;
           statusElem.style.background = 'rgba(220,53,69,0.95)';
           statusElem.style.color = 'white';
+          // Clear error message after 3 seconds
+          setTimeout(() => {
+            updateStatus();
+          }, 3000);
         }
         break;
     }
@@ -766,8 +770,6 @@
     if (currentUsername && gameState && Array.isArray(gameState.players)) {
       if (!gameState.players.includes(currentUsername)) {
         sendMessage({ type: 'joinGame', data: { username: currentUsername }});
-        // request immediate refresh
-        setTimeout(() => sendMessage({ type: 'requestGameState' }), 300);
       }
     }
   }
@@ -837,6 +839,12 @@
   document.addEventListener('DOMContentLoaded', () => sendMessage({ type: 'webViewReady' }));
   if (restartBtn) restartBtn.addEventListener('click', () => sendMessage({ type: 'requestGameState' }));
 
+ // Request fresh game state when tab becomes visible (helps with reconnection)
+ document.addEventListener('visibilitychange', () => {
+   if (!document.hidden && currentUsername) {
+     sendMessage({ type: 'requestGameState' });
+   }
+ });
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initThreeJS);
   else initThreeJS();
 

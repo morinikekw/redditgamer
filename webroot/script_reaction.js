@@ -931,6 +931,13 @@
           playersElem.textContent = `❌ Error: ${message.message}`;
           playersElem.style.background = 'rgba(220,53,69,0.95)';
           playersElem.style.color = 'white';
+          // Clear error message after 3 seconds
+          setTimeout(() => {
+            playersElem.textContent = `👥 Player: ${currentUsername}`;
+            playersElem.className = 'status-display-3d';
+            playersElem.style.background = '';
+            playersElem.style.color = '';
+          }, 3000);
         }
         break;
     }
@@ -940,6 +947,12 @@
   window.addEventListener('message', handleMessage);
   document.addEventListener('DOMContentLoaded', () => sendMessage({ type: 'webViewReady' }));
 
+ // Request fresh scores when tab becomes visible (helps with reconnection)
+ document.addEventListener('visibilitychange', () => {
+   if (!document.hidden && currentUsername) {
+     sendMessage({ type: 'getReactionScores' });
+   }
+ });
   startBtn && startBtn.addEventListener('click', startGame);
 
   // init

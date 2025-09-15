@@ -1,7 +1,8 @@
 (function() {
   // Send webViewReady immediately when script loads
   function sendMessage(message) {
-    window.parent.postMessage(message, '*');
+    try { window.parent.postMessage(message, '*'); }
+    catch (e) { console.warn('postMessage failed', e); }
   }
   
   // Notify parent immediately that web view is ready
@@ -21,6 +22,7 @@
   let gameActive = false;
   let refreshInterval = null;
   let timerInterval = null;
+  let selectedDot = null; // Track selected dot for line drawing (mouse only)
 
   // Three.js variables
   let scene, camera, renderer, raycaster, mouse;
@@ -30,11 +32,17 @@
   let isSceneReady = false;
 
   // Camera control variables
-  let isDragging = false;
+  let isDragging = false;                    // mouse dragging
   let previousMousePosition = { x: 0, y: 0 };
   let cameraDistance = 12;
   let cameraTheta = Math.PI / 4;
   let cameraPhi = Math.PI / 3;
+
+  // Touch control variables (separate from mouse)
+  let touchActive = false;                   // set during touch interactions
+  let touchMoved = false;                    // true if finger moved (we treat as rotate)
+  let lastTouchTime = 0;                     // used to suppress synthetic click after touch
+  const TOUCH_CLICK_SUPPRESSION_MS = 700;    // ignore clicks within this many ms after touch
 
   // Game parameters
   const gridSize = 5;
@@ -42,6 +50,11 @@
 
   // Initialize Three.js scene
   function initThreeJS() {
+    if (!canvas) {
+      console.error('Canvas not found');
+      return;
+    }
+
     // Scene setup
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x1a1a2e);
@@ -72,22 +85,25 @@
     // Create the dots grid
     createDotsGrid();
 
-    // Event listeners
+    // Event listeners (mouse)
     canvas.addEventListener('mousedown', onMouseDown, false);
     canvas.addEventListener('mousemove', onMouseMove, false);
     canvas.addEventListener('mouseup', onMouseUp, false);
-    canvas.addEventListener('wheel', onMouseWheel, false);
-    canvas.addEventListener('click', onCanvasClick);
+    canvas.addEventListener('wheel', onMouseWheel, { passive: false });
+    canvas.addEventListener('click', onCanvasClick, false);
+
+    // Touch listeners (touch-only rotates; taps do NOT draw)
     canvas.addEventListener('touchstart', onTouchStart, { passive: false });
     canvas.addEventListener('touchmove', onTouchMove, { passive: false });
-    canvas.addEventListener('touchend', onTouchEnd, false);
+    canvas.addEventListener('touchend', onTouchEnd, { passive: false });
+
     window.addEventListener('resize', onWindowResize);
 
     // Start render loop
     animate();
 
     // Hide loading indicator
-    loadingElem.style.display = 'none';
+    if (loadingElem) loadingElem.style.display = 'none';
     isSceneReady = true;
   }
 
@@ -97,38 +113,32 @@
     const z = cameraDistance * Math.sin(cameraPhi) * Math.sin(cameraTheta);
     const y = cameraDistance * Math.cos(cameraPhi);
     
-    camera.position.set(x, y, z);
-    camera.lookAt(0, 0, 0);
+    if (camera) {
+      camera.position.set(x, y, z);
+      camera.lookAt(0, 0, 0);
+    }
   }
 
-  // Mouse event handlers
+  // Mouse event handlers (desktop)
   function onMouseDown(event) {
+    if (event.button !== 0) return; // only left button
     isDragging = true;
-    previousMousePosition = {
-      x: event.clientX,
-      y: event.clientY
-    };
+    previousMousePosition = { x: event.clientX, y: event.clientY };
   }
 
   function onMouseMove(event) {
     if (!isDragging) return;
-    
     const deltaX = event.clientX - previousMousePosition.x;
     const deltaY = event.clientY - previousMousePosition.y;
-    
-    previousMousePosition = {
-      x: event.clientX,
-      y: event.clientY
-    };
-    
+    previousMousePosition = { x: event.clientX, y: event.clientY };
+
     cameraTheta += deltaX * 0.01;
     cameraPhi += deltaY * 0.01;
     cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi));
-    
     updateCameraPosition();
   }
 
-  function onMouseUp() {
+  function onMouseUp(/*event*/) {
     isDragging = false;
   }
 
@@ -139,55 +149,115 @@
     updateCameraPosition();
   }
 
-  // Touch event handlers
+  // Touch event handlers (mobile): rotate / zoom only, NO drawing
   function onTouchStart(event) {
+    // We explicitly prevent touch taps from causing clicks that draw lines.
+    // Touch interactions WILL rotate the camera when user drags their finger.
+    if (!event.touches || event.touches.length === 0) return;
+    touchActive = true;
+    touchMoved = false;
+
+    // single-finger rotation start
     if (event.touches.length === 1) {
-      isDragging = true;
-      previousMousePosition = {
-        x: event.touches[0].clientX,
-        y: event.touches[0].clientY
-      };
+      previousMousePosition = { x: event.touches[0].clientX, y: event.touches[0].clientY };
     }
+
+    // two-finger pinch start: store initial distance for zoom
+    if (event.touches.length === 2) {
+      // store midpoint and distance for potential pinch zoom
+      const t0 = event.touches[0], t1 = event.touches[1];
+      previousMousePosition = {
+        x: (t0.clientX + t1.clientX) / 2,
+        y: (t0.clientY + t1.clientY) / 2,
+        pinchDistance: Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY)
+      };
+      // mark as moved so taps are ignored
+      touchMoved = true;
+    }
+
+    // block the synthetic click that some browsers emit
     event.preventDefault();
   }
 
   function onTouchMove(event) {
-    if (!isDragging || event.touches.length !== 1) return;
-    
-    const deltaX = event.touches[0].clientX - previousMousePosition.x;
-    const deltaY = event.touches[0].clientY - previousMousePosition.y;
-    
-    previousMousePosition = {
-      x: event.touches[0].clientX,
-      y: event.touches[0].clientY
-    };
-    
-    cameraTheta += deltaX * 0.01;
-    cameraPhi += deltaY * 0.01;
-    cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi));
-    
-    updateCameraPosition();
+    if (!touchActive) return;
+    if (!event.touches || event.touches.length === 0) return;
+
+    // single-finger -> rotate
+    if (event.touches.length === 1) {
+      const t = event.touches[0];
+      const deltaX = t.clientX - previousMousePosition.x;
+      const deltaY = t.clientY - previousMousePosition.y;
+      previousMousePosition = { x: t.clientX, y: t.clientY };
+
+      cameraTheta += deltaX * 0.01;
+      cameraPhi += deltaY * 0.01;
+      cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi));
+      updateCameraPosition();
+      touchMoved = true;
+    }
+
+    // two-finger pinch -> zoom (and rotate by midpoint movement)
+    else if (event.touches.length === 2) {
+      const t0 = event.touches[0], t1 = event.touches[1];
+      const midX = (t0.clientX + t1.clientX) / 2;
+      const midY = (t0.clientY + t1.clientY) / 2;
+      const pinchDistance = Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY);
+
+      const dx = midX - previousMousePosition.x;
+      const dy = midY - previousMousePosition.y;
+      // rotate a little by centroid movement
+      cameraTheta += dx * 0.01;
+      cameraPhi += dy * 0.01;
+      cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi));
+
+      // zoom by pinch ratio
+      if (previousMousePosition.pinchDistance) {
+        const ratio = previousMousePosition.pinchDistance / pinchDistance;
+        cameraDistance *= ratio;
+        cameraDistance = Math.max(6, Math.min(20, cameraDistance));
+      }
+      previousMousePosition = { x: midX, y: midY, pinchDistance };
+      updateCameraPosition();
+
+      touchMoved = true;
+    }
+
+    // prevent scrolling when touching the canvas
     event.preventDefault();
   }
 
-  function onTouchEnd() {
-    isDragging = false;
+  function onTouchEnd(event) {
+    // When the touch sequence ends, record lastTouchTime so subsequent synthetic click is ignored.
+    touchActive = false;
+    lastTouchTime = Date.now();
+    // do not call handleInteraction or any selection: touches never draw lines
+    // ensure selection is cleared if any (only mouse selects)
+    if (selectedDot) {
+      safeSetEmissive(selectedDot, 0x000000);
+      selectedDot = null;
+    }
+    // prevent synthetic click: stopPropagation + preventDefault
+    if (event) {
+      try { event.preventDefault(); event.stopPropagation(); } catch (e) {}
+    }
   }
 
   // Create dots grid
   function createDotsGrid() {
     dotMeshes = [];
     
-    const dotGeometry = new THREE.SphereGeometry(0.1, 16, 16);
+    const dotGeometry = new THREE.SphereGeometry(0.12, 16, 16);
     const dotMaterial = new THREE.MeshStandardMaterial({ 
       color: 0xffffff,
       roughness: 0.3,
-      metalness: 0.7
+      metalness: 0.7,
+      emissive: 0x000000
     });
 
     for (let x = 0; x < gridSize; x++) {
       for (let y = 0; y < gridSize; y++) {
-        const dot = new THREE.Mesh(dotGeometry, dotMaterial);
+        const dot = new THREE.Mesh(dotGeometry, dotMaterial.clone());
         dot.position.set(
           (x - (gridSize - 1) / 2) * dotSpacing,
           0,
@@ -230,12 +300,13 @@
     const direction = new THREE.Vector3().subVectors(end, start);
     const length = direction.length();
     
-    const lineGeometry = new THREE.CylinderGeometry(0.02, 0.02, length, 8);
-    const playerColors = {
-      [gameState?.players?.[0]]: 0xff4444,
-      [gameState?.players?.[1]]: 0x4444ff
-    };
-    const lineColor = playerColors[player] || 0xffffff;
+    const lineGeometry = new THREE.CylinderGeometry(0.03, 0.03, length, 8);
+    const playerColors = {};
+    if (gameState && Array.isArray(gameState.players)) {
+      playerColors[gameState.players[0]] = 0xff4444;
+      playerColors[gameState.players[1]] = 0x4444ff;
+    }
+    const lineColor = (player && playerColors[player]) ? playerColors[player] : 0xffffff;
     
     const lineMaterial = new THREE.MeshStandardMaterial({ 
       color: lineColor,
@@ -248,8 +319,9 @@
     // Position and orient the line
     const center = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
     line.position.copy(center);
-    line.lookAt(end);
-    line.rotateX(Math.PI / 2);
+    // Cylinder in three points its local Y is along its height; orient it from center to end
+    const up = new THREE.Vector3(0, 1, 0);
+    line.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.clone().normalize());
     line.castShadow = true;
     
     scene.add(line);
@@ -261,11 +333,12 @@
   // Create completed box
   function createBox(x, y, player) {
     const boxGeometry = new THREE.PlaneGeometry(dotSpacing * 0.8, dotSpacing * 0.8);
-    const playerColors = {
-      [gameState?.players?.[0]]: 0xff4444,
-      [gameState?.players?.[1]]: 0x4444ff
-    };
-    const boxColor = playerColors[player] || 0x888888;
+    const playerColors = {};
+    if (gameState && Array.isArray(gameState.players)) {
+      playerColors[gameState.players[0]] = 0xff4444;
+      playerColors[gameState.players[1]] = 0x4444ff;
+    }
+    const boxColor = (player && playerColors[player]) ? playerColors[player] : 0x888888;
     
     const boxMaterial = new THREE.MeshStandardMaterial({ 
       color: boxColor,
@@ -289,13 +362,28 @@
     return box;
   }
 
-  // Handle canvas click
+  // Helper to safely set emissive color (some materials may not have emissive)
+  function safeSetEmissive(mesh, hex) {
+    try {
+      if (mesh && mesh.material && 'emissive' in mesh.material) {
+        mesh.material.emissive.setHex(hex);
+      }
+    } catch (e) {}
+  }
+
+  // Handle canvas click (mouse only)
   function onCanvasClick(event) {
+    // Suppress clicks that come immediately after a touch (synthetic clicks)
+    if (Date.now() - lastTouchTime < TOUCH_CLICK_SUPPRESSION_MS) {
+      return;
+    }
+    // If the last interaction was a touch (touchActive recently), do not treat click as drawing.
+    if (touchActive) return;
     if (isDragging) return;
     handleInteraction(event.clientX, event.clientY);
   }
 
-  // Handle interaction
+  // Handle interaction (mouse only draws lines)
   function handleInteraction(clientX, clientY) {
     if (!gameState || !gameActive || gameState.status !== 'active' || !isSceneReady) return;
     if (gameState.turn !== currentUsername) return;
@@ -305,16 +393,55 @@
     mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
 
     raycaster.setFromCamera(mouse, camera);
-    const intersects = raycaster.intersectObjects(dotMeshes);
+    const intersects = raycaster.intersectObjects(dotMeshes, true);
 
     if (intersects.length > 0) {
       const dot = intersects[0].object;
-      // For now, just highlight the dot - in a full implementation,
-      // you'd need to detect which line the user wants to draw
-      dot.material.emissive.setHex(0x444444);
-      setTimeout(() => {
-        dot.material.emissive.setHex(0x000000);
-      }, 200);
+      
+      // Only mouse interactions control selectedDot and drawing
+      if (!selectedDot) {
+        // First dot selection
+        selectedDot = dot;
+        safeSetEmissive(selectedDot, 0x00ff00); // Green highlight
+      } else if (selectedDot === dot) {
+        // Deselect the same dot
+        safeSetEmissive(selectedDot, 0x000000);
+        selectedDot = null;
+      } else {
+        // Second dot selection - attempt to draw line
+        const dot1 = selectedDot.userData;
+        const dot2 = dot.userData;
+        
+        // Check if dots are adjacent
+        const dx = Math.abs(dot2.x - dot1.x);
+        const dy = Math.abs(dot2.y - dot1.y);
+        
+        if ((dx === 1 && dy === 0) || (dx === 0 && dy === 1)) {
+          // Valid adjacent dots - send move
+          const lineKey = `${dot1.x},${dot1.y},${dot2.x},${dot2.y}`;
+          
+          sendMessage({
+            type: 'makeMove',
+            data: {
+              username: currentUsername,
+              position: lineKey,
+              gameType: 'dots'
+            }
+          });
+          
+          // Clear selection
+          safeSetEmissive(selectedDot, 0x000000);
+          selectedDot = null;
+        } else {
+          // Invalid selection - highlight error briefly
+          safeSetEmissive(dot, 0xff0000);
+          setTimeout(() => {
+            safeSetEmissive(dot, 0x000000);
+          }, 500);
+          
+          // Keep first dot selected
+        }
+      }
     }
   }
 
@@ -323,43 +450,44 @@
     if (!gameState || !isSceneReady) return;
 
     // Clear existing lines and boxes
-    lineMeshes.forEach(line => scene.remove(line));
-    boxMeshes.forEach(box => scene.remove(box));
+    lineMeshes.forEach(line => { try { scene.remove(line); } catch (e) {} });
+    boxMeshes.forEach(box => { try { scene.remove(box); } catch (e) {} });
     lineMeshes = [];
     boxMeshes = [];
 
-    // Draw lines
-    gameState.dots.lines.forEach(lineKey => {
-      const coords = lineKey.split(',').map(Number);
-      if (coords.length === 4) {
-        const [x1, y1, x2, y2] = coords;
-        createLine(x1, y1, x2, y2, 'system');
-      }
-    });
+    // Draw lines (from gameState.dots.lines)
+    if (gameState.dots && Array.isArray(gameState.dots.lines)) {
+      gameState.dots.lines.forEach(lineKey => {
+        const coords = (typeof lineKey === 'string' ? lineKey : '').split(',').map(Number);
+        if (coords.length === 4) {
+          const [x1, y1, x2, y2] = coords;
+          // pass player if stored as system uses a string; we ignore if not available
+          createLine(x1, y1, x2, y2, 'system');
+        }
+      });
+    }
 
     // Draw boxes
-    Object.entries(gameState.dots.boxes).forEach(([boxKey, player]) => {
-      const coords = boxKey.split(',').map(Number);
-      if (coords.length === 2) {
-        const [x, y] = coords;
-        createBox(x, y, player);
-      }
-    });
+    if (gameState.dots && gameState.dots.boxes) {
+      Object.entries(gameState.dots.boxes).forEach(([boxKey, player]) => {
+        const coords = boxKey.split(',').map(Number);
+        if (coords.length === 2) {
+          const [x, y] = coords;
+          createBox(x, y, player);
+        }
+      });
+    }
   }
 
   // Animation loop
   function animate() {
     requestAnimationFrame(animate);
-    
-    if (isSceneReady) {
-      renderer.render(scene, camera);
-    }
+    if (isSceneReady && renderer && scene && camera) renderer.render(scene, camera);
   }
 
   // Handle window resize
   function onWindowResize() {
-    if (!isSceneReady) return;
-    
+    if (!isSceneReady || !camera || !renderer || !canvas) return;
     camera.aspect = canvas.clientWidth / canvas.clientHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(canvas.clientWidth, canvas.clientHeight);
@@ -421,33 +549,41 @@
       <div class="modal-content ${modalClass}">
         <h2>${emoji} ${title} ${emoji}</h2>
         <p>${message}</p>
-        <button onclick="this.closest('.modal').remove(); sendMessage({type: 'requestGameState'});">
-          Play Again
-        </button>
+        <button id="playAgainBtn">Play Again</button>
       </div>
     `;
     
     document.body.appendChild(modal);
+    const playBtn = document.getElementById('playAgainBtn');
+    if (playBtn) {
+      playBtn.addEventListener('click', () => {
+        if (modal.parentNode) modal.remove();
+        sendMessage({ type: 'requestGameState' });
+      });
+    }
     
     setTimeout(() => {
-      if (modal.parentNode) {
-        modal.remove();
-      }
+      if (modal.parentNode) modal.remove();
     }, 5000);
   }
 
   // Update game status display
   function updateStatus() {
     if (!gameState) {
-      statusElem.textContent = 'Loading...';
-      statusElem.className = 'status-display-3d';
+      if (statusElem) {
+        statusElem.textContent = 'Loading...';
+        statusElem.className = 'status-display-3d';
+      }
       return;
     }
 
+    if (!statusElem) return;
     statusElem.className = 'status-display-3d';
 
     if (gameState.status === 'waiting') {
       statusElem.textContent = `⏳ Waiting for players... (${gameState.players.length}/${gameState.maxPlayers})`;
+      statusElem.style.background = '';
+      statusElem.style.color = '';
     } else if (gameState.status === 'active') {
       const isMyTurn = gameState.turn === currentUsername;
       const myScore = gameState.dots?.scores?.[currentUsername] || 0;
@@ -507,10 +643,10 @@
     
     playersElem.className = 'status-display-3d';
     
-    if (gameState.players.length === 0) {
+    if (!Array.isArray(gameState.players) || gameState.players.length === 0) {
       playersElem.textContent = '👥 No players yet';
     } else {
-      const playersList = gameState.players.map((player, index) => {
+      const playersList = gameState.players.map((player) => {
         const score = gameState.dots?.scores?.[player] || 0;
         const isCurrent = player === currentUsername;
         return `${player} (${score} boxes)${isCurrent ? ' - You' : ''}`;
@@ -522,13 +658,16 @@
   // Handle messages from parent
   function handleMessage(event) {
     let message = event.data;
+    if (!message) return;
     if (message.type === 'devvit-message' && message.data && message.data.message) {
       message = message.data.message;
     }
+
+    if (!message || !message.type) return;
     
     switch (message.type) {
       case 'initialData':
-        currentUsername = message.data.username;
+        currentUsername = message.data && message.data.username;
         sendMessage({ type: 'initializeGame' });
         sendMessage({ type: 'requestGameState' });
         break;
@@ -536,16 +675,20 @@
       case 'gameState':
         gameState = message.data;
         gameActive = gameState.status === 'active';
+        // Stop selection if something changed
+        if (selectedDot) {
+          safeSetEmissive(selectedDot, 0x000000);
+          selectedDot = null;
+        }
         updateScene();
         updateStatus();
         updatePlayersInfo();
         
-        if (!gameState.players.includes(currentUsername)) {
+        if (!Array.isArray(gameState.players) || !gameState.players.includes(currentUsername)) {
           sendMessage({
             type: 'joinGame',
             data: { username: currentUsername }
           });
-          sendMessage({ type: 'requestGameState' });
         } else if (gameActive) {
           startAutoRefresh();
           startTurnTimer();
@@ -553,9 +696,13 @@
         break;
 
       case 'playerJoined':
-        if (message.data.gameState) {
+        if (message.data && message.data.gameState) {
           gameState = message.data.gameState;
           gameActive = gameState.status === 'active';
+          if (selectedDot) {
+            safeSetEmissive(selectedDot, 0x000000);
+            selectedDot = null;
+          }
           updateScene();
           updateStatus();
           updatePlayersInfo();
@@ -569,14 +716,13 @@
 
       case 'gameStarted':
         gameActive = true;
-        if (message.data.gameState) {
+        if (message.data && message.data.gameState) {
           gameState = message.data.gameState;
           updateScene();
           updateStatus();
           updatePlayersInfo();
         }
-        
-        if (gameActive && gameState && gameState.players.includes(currentUsername)) {
+        if (gameActive && gameState && Array.isArray(gameState.players) && gameState.players.includes(currentUsername)) {
           startAutoRefresh();
           startTurnTimer();
         }
@@ -584,9 +730,13 @@
 
       case 'gameUpdate':
       case 'moveMade':
-        if (message.data.gameState || message.data) {
+        if (message.data && (message.data.gameState || message.data)) {
           gameState = message.data.gameState || message.data;
           gameActive = gameState.status === 'active';
+          if (selectedDot) {
+            safeSetEmissive(selectedDot, 0x000000);
+            selectedDot = null;
+          }
           updateScene();
           updateStatus();
           updatePlayersInfo();
@@ -594,35 +744,48 @@
         break;
 
       case 'turnChanged':
+        if (selectedDot) {
+          safeSetEmissive(selectedDot, 0x000000);
+          selectedDot = null;
+        }
         updateStatus();
         break;
 
       case 'timerUpdate':
-        updateTimer(message.data.timeRemaining, message.data.currentTurn);
+        if (message.data) updateTimer(message.data.timeRemaining, message.data.currentTurn);
         break;
 
       case 'gameEnded':
         gameActive = false;
+        if (selectedDot) {
+          safeSetEmissive(selectedDot, 0x000000);
+          selectedDot = null;
+        }
         if (refreshInterval) clearInterval(refreshInterval);
         if (timerInterval) clearInterval(timerInterval);
-        
-        if (message.data.finalState) {
+
+        if (message.data && message.data.finalState) {
           gameState = message.data.finalState;
           updateScene();
           updateStatus();
           updatePlayersInfo();
         }
-        
         setTimeout(() => {
-          showGameEndModal(message.data.winner, message.data.isDraw, message.data.reason);
+          showGameEndModal(message.data && message.data.winner, message.data && message.data.isDraw, message.data && message.data.reason);
         }, 500);
         break;
 
       case 'error':
-        statusElem.textContent = `❌ Error: ${message.message}`;
-        statusElem.className = 'status-display-3d';
-        statusElem.style.background = 'rgba(220, 53, 69, 0.95)';
-        statusElem.style.color = 'white';
+        if (selectedDot) {
+          safeSetEmissive(selectedDot, 0x000000);
+          selectedDot = null;
+        }
+        if (statusElem) {
+          statusElem.textContent = `❌ Error: ${message.message || (message.data && message.data.message) || 'unknown'}`;
+          statusElem.className = 'status-display-3d';
+          statusElem.style.background = 'rgba(220, 53, 69, 0.95)';
+          statusElem.style.color = 'white';
+        }
         break;
     }
   }
@@ -633,9 +796,18 @@
     sendMessage({ type: 'webViewReady' });
   });
 
-  restartBtn.addEventListener('click', () => {
-    sendMessage({ type: 'requestGameState' });
+  // Request fresh game state when tab becomes visible (helps with reconnection)
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && currentUsername) {
+      sendMessage({ type: 'requestGameState' });
+    }
   });
+
+  if (restartBtn) {
+    restartBtn.addEventListener('click', () => {
+      sendMessage({ type: 'requestGameState' });
+    });
+  }
 
   // Initialize Three.js when DOM is loaded
   if (document.readyState === 'loading') {
@@ -644,5 +816,7 @@
     initThreeJS();
   }
 
+  // expose debug sendMessage
   window.sendMessage = sendMessage;
+
 })();
