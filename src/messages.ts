@@ -1,6 +1,6 @@
 /** Message from Devvit to the web view. */
 export type DevvitMessage =
-  | { type: 'initialData'; data: { username: string; currentCounter: number; postId: string; theme?: string } }
+  | { type: 'initialData'; data: { username: string; currentCounter: number; postId: string; sessionId: string; theme?: string } }
   | { type: 'updateCounter'; data: { currentCounter: number } }
   | { type: 'gameState'; data: any }
   | { type: 'error'; code: number; message: string; recoverable: boolean }

@@ -1,4 +1,3 @@
-// script_connect4_glow.js
 (function () {
   // Send ready
   function sendMessage(message) { window.parent.postMessage(message, '*'); }

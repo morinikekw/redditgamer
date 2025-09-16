@@ -1,8 +1,18 @@
 (function() {
+  const GAME_TYPE = 'dots';
+
   // Send webViewReady immediately when script loads
   function sendMessage(message) {
-    try { window.parent.postMessage(message, '*'); }
-    catch (e) { console.warn('postMessage failed', e); }
+    try {
+      // attempt to attach gameType without mutating caller's object
+      const msg = (typeof message === 'object' && message !== null) ? JSON.parse(JSON.stringify(message)) : { type: String(message) };
+      if (!msg.data || typeof msg.data !== 'object') msg.data = {};
+      msg.data.gameType = GAME_TYPE;
+      window.parent.postMessage(msg, '*');
+    } catch (e) {
+      // fallback to original behavior
+      try { window.parent.postMessage(message, '*'); } catch (err) { console.warn('postMessage failed', err, e); }
+    }
   }
   
   // Notify parent immediately that web view is ready
@@ -43,6 +53,12 @@
   let touchMoved = false;                    // true if finger moved (we treat as rotate)
   let lastTouchTime = 0;                     // used to suppress synthetic click after touch
   const TOUCH_CLICK_SUPPRESSION_MS = 700;    // ignore clicks within this many ms after touch
+
+  // New: touch tap detection helpers (to allow drawing via touch)
+  let touchStartTime = 0;
+  let touchStartPos = { x: 0, y: 0 };
+  const TOUCH_TAP_MAX_DURATION = 280; // ms
+  const TOUCH_TAP_MOVE_THRESHOLD = 10; // px
 
   // Game parameters
   const gridSize = 5;
@@ -92,7 +108,7 @@
     canvas.addEventListener('wheel', onMouseWheel, { passive: false });
     canvas.addEventListener('click', onCanvasClick, false);
 
-    // Touch listeners (touch-only rotates; taps do NOT draw)
+    // Touch listeners - now support tap-to-draw as well as rotate/pinch
     canvas.addEventListener('touchstart', onTouchStart, { passive: false });
     canvas.addEventListener('touchmove', onTouchMove, { passive: false });
     canvas.addEventListener('touchend', onTouchEnd, { passive: false });
@@ -149,13 +165,15 @@
     updateCameraPosition();
   }
 
-  // Touch event handlers (mobile): rotate / zoom only, NO drawing
+  // Touch event handlers (mobile): rotate / zoom and now taps draw
   function onTouchStart(event) {
-    // We explicitly prevent touch taps from causing clicks that draw lines.
-    // Touch interactions WILL rotate the camera when user drags their finger.
     if (!event.touches || event.touches.length === 0) return;
     touchActive = true;
     touchMoved = false;
+
+    // capture start time / pos for tap detection
+    touchStartTime = Date.now();
+    touchStartPos = { x: event.touches[0].clientX, y: event.touches[0].clientY };
 
     // single-finger rotation start
     if (event.touches.length === 1) {
@@ -164,7 +182,6 @@
 
     // two-finger pinch start: store initial distance for zoom
     if (event.touches.length === 2) {
-      // store midpoint and distance for potential pinch zoom
       const t0 = event.touches[0], t1 = event.touches[1];
       previousMousePosition = {
         x: (t0.clientX + t1.clientX) / 2,
@@ -188,13 +205,20 @@
       const t = event.touches[0];
       const deltaX = t.clientX - previousMousePosition.x;
       const deltaY = t.clientY - previousMousePosition.y;
+
+      // if movement exceeds threshold treat as move/rotate
+      if (!touchMoved && (Math.abs(deltaX) > TOUCH_TAP_MOVE_THRESHOLD || Math.abs(deltaY) > TOUCH_TAP_MOVE_THRESHOLD)) {
+        touchMoved = true;
+      }
+
       previousMousePosition = { x: t.clientX, y: t.clientY };
 
-      cameraTheta += deltaX * 0.01;
-      cameraPhi += deltaY * 0.01;
-      cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi));
-      updateCameraPosition();
-      touchMoved = true;
+      if (touchMoved) {
+        cameraTheta += deltaX * 0.01;
+        cameraPhi += deltaY * 0.01;
+        cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi));
+        updateCameraPosition();
+      }
     }
 
     // two-finger pinch -> zoom (and rotate by midpoint movement)
@@ -231,12 +255,25 @@
     // When the touch sequence ends, record lastTouchTime so subsequent synthetic click is ignored.
     touchActive = false;
     lastTouchTime = Date.now();
-    // do not call handleInteraction or any selection: touches never draw lines
+
+    // If this was a quick tap (no significant movement) treat it as a tap interaction to draw
+    const duration = Date.now() - touchStartTime;
+    if (!touchMoved && duration <= TOUCH_TAP_MAX_DURATION) {
+      // determine coordinates from changedTouches if available
+      const touch = (event.changedTouches && event.changedTouches[0]) ? event.changedTouches[0] : null;
+      const clientX = touch ? touch.clientX : touchStartPos.x;
+      const clientY = touch ? touch.clientY : touchStartPos.y;
+
+      // call same handler as mouse click (will early-return if not allowed)
+      handleInteraction(clientX, clientY);
+    }
+
     // ensure selection is cleared if any (only mouse selects)
     if (selectedDot) {
       safeSetEmissive(selectedDot, 0x000000);
       selectedDot = null;
     }
+
     // prevent synthetic click: stopPropagation + preventDefault
     if (event) {
       try { event.preventDefault(); event.stopPropagation(); } catch (e) {}
@@ -383,7 +420,7 @@
     handleInteraction(event.clientX, event.clientY);
   }
 
-  // Handle interaction (mouse only draws lines)
+  // Handle interaction (mouse/touch taps draw lines)
   function handleInteraction(clientX, clientY) {
     if (!gameState || !gameActive || gameState.status !== 'active' || !isSceneReady) return;
     if (gameState.turn !== currentUsername) return;
@@ -398,7 +435,7 @@
     if (intersects.length > 0) {
       const dot = intersects[0].object;
       
-      // Only mouse interactions control selectedDot and drawing
+      // Only mouse interactions previously controlled selectedDot, but now touch taps use same logic
       if (!selectedDot) {
         // First dot selection
         selectedDot = dot;

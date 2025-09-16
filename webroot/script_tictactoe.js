@@ -1,5 +1,4 @@
 (function() {
-  // Send webViewReady immediately when script loads
   function sendMessage(message) {
     window.parent.postMessage(message, '*');
   }
