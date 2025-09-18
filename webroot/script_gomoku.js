@@ -1,6 +1,20 @@
 (function () {
+  const GAME_TYPE = 'gomoku';
+
   // --- messaging helper ---
-  function sendMessage(message) { window.parent.postMessage(message, '*'); }
+  function sendMessage(message) {
+    try {
+      // attempt to attach gameType and sessionId without mutating caller's object
+      const msg = (typeof message === 'object' && message !== null) ? JSON.parse(JSON.stringify(message)) : { type: String(message) };
+      if (!msg.data || typeof msg.data !== 'object') msg.data = {};
+      msg.data.gameType = GAME_TYPE;
+      if (currentSessionId) msg.data.sessionId = currentSessionId;
+      window.parent.postMessage(msg, '*');
+    } catch (e) {
+      // fallback to original behavior
+      try { window.parent.postMessage(message, '*'); } catch (err) { console.warn('postMessage failed', err, e); }
+    }
+  }
   sendMessage({ type: 'webViewReady' });
 
   // --- DOM ---
@@ -14,6 +28,7 @@
   // --- game state ---
   let gameState = null;
   let currentUsername = null;
+  let currentSessionId = null;
   let gameActive = false;
   let refreshInterval = null;
   let timerInterval = null;
@@ -486,7 +501,7 @@
             popSound(true);
             animateDrop(placedStone, 0.4, () => {
               intersect.userData.occupied = true;
-              sendMessage({ type: 'makeMove', data: { username: currentUsername, position: [xi, yi], gameType: 'gomoku' } });
+              sendMessage({ type: 'makeMove', data: { username: currentUsername, position: [xi, yi], gameType: GAME_TYPE } });
             });
           } else {
             popSound(false);
@@ -569,7 +584,7 @@
       popSound(true);
       animateDrop(placedStone, 0.4, () => {
         intersect.userData.occupied = true;
-        sendMessage({ type: 'makeMove', data: { username: currentUsername, position: [x, y], gameType: 'gomoku' } });
+        sendMessage({ type: 'makeMove', data: { username: currentUsername, position: [x, y], gameType: GAME_TYPE } });
       });
     } else {
       popSound(false);
@@ -716,6 +731,7 @@
     switch (message.type) {
       case 'initialData':
         currentUsername = message.data.username;
+        currentSessionId = message.data.sessionId;
         sendMessage({ type: 'initializeGame' });
         sendMessage({ type: 'requestGameState' });
         break;

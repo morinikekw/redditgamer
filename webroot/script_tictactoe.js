@@ -1,6 +1,18 @@
 (function() {
+  const GAME_TYPE = 'tictactoe';
+
   function sendMessage(message) {
-    window.parent.postMessage(message, '*');
+    try {
+      // attempt to attach gameType and sessionId without mutating caller's object
+      const msg = (typeof message === 'object' && message !== null) ? JSON.parse(JSON.stringify(message)) : { type: String(message) };
+      if (!msg.data || typeof msg.data !== 'object') msg.data = {};
+      msg.data.gameType = GAME_TYPE;
+      if (currentSessionId) msg.data.sessionId = currentSessionId;
+      window.parent.postMessage(msg, '*');
+    } catch (e) {
+      // fallback to original behavior
+      try { window.parent.postMessage(message, '*'); } catch (err) { console.warn('postMessage failed', err, e); }
+    }
   }
 
   // Notify parent immediately that web view is ready
@@ -17,6 +29,7 @@
   // Game state
   let gameState = null;
   let currentUsername = null;
+  let currentSessionId = null;
   let gameActive = false;
   let refreshInterval = null;
   let timerInterval = null;
@@ -424,7 +437,7 @@
           data: {
             username: currentUsername,
             position: { face: faceIndex, cell: cellIndex },
-            gameType: 'tictactoe'
+            gameType: GAME_TYPE
           }
         });
       }
@@ -541,7 +554,7 @@
 
     if (isDraw) {
       modalClass = 'draw-modal';
-      title = "It's a Draw! 🤝";
+      title = "It's a Draw!";
       message = "Great game! Both players played well.";
       emoji = '🤝';
     } else if (winner === currentUsername) {
@@ -677,6 +690,7 @@
     switch (message.type) {
       case 'initialData':
         currentUsername = message.data.username;
+        currentSessionId = message.data.sessionId;
         sendMessage({ type: 'initializeGame' });
         sendMessage({ type: 'requestGameState' });
         break;

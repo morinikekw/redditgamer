@@ -1,7 +1,19 @@
 (function() {
+  const GAME_TYPE = 'reaction';
+
   // Send webViewReady immediately when script loads
   function sendMessage(message) {
-    window.parent.postMessage(message, '*');
+    try {
+      // attempt to attach gameType and sessionId without mutating caller's object
+      const msg = (typeof message === 'object' && message !== null) ? JSON.parse(JSON.stringify(message)) : { type: String(message) };
+      if (!msg.data || typeof msg.data !== 'object') msg.data = {};
+      msg.data.gameType = GAME_TYPE;
+      if (currentSessionId) msg.data.sessionId = currentSessionId;
+      window.parent.postMessage(msg, '*');
+    } catch (e) {
+      // fallback to original behavior
+      try { window.parent.postMessage(message, '*'); } catch (err) { console.warn('postMessage failed', err, e); }
+    }
   }
 
   // Notify parent immediately that web view is ready
@@ -18,6 +30,7 @@
 
   // Game state
   let currentUsername = "Guest";
+  let currentSessionId = null;
   let gameActive = false;
   let score = 0;
   let clickTimes = [];
@@ -914,6 +927,7 @@
     switch (message.type) {
       case 'initialData':
         currentUsername = message.data.username || currentUsername;
+        currentSessionId = message.data.sessionId;
         if (playersElem) { playersElem.textContent = `👥 Player: ${currentUsername}`; playersElem.className = 'status-display-3d'; }
         startAutoRefresh();
         sendMessage({ type: 'initializeGame' });

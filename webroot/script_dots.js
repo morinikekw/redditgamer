@@ -4,18 +4,17 @@
   // Send webViewReady immediately when script loads
   function sendMessage(message) {
     try {
-      // attempt to attach gameType without mutating caller's object
+      // attempt to attach gameType and sessionId without mutating caller's object
       const msg = (typeof message === 'object' && message !== null) ? JSON.parse(JSON.stringify(message)) : { type: String(message) };
       if (!msg.data || typeof msg.data !== 'object') msg.data = {};
       msg.data.gameType = GAME_TYPE;
+      if (currentSessionId) msg.data.sessionId = currentSessionId;
       window.parent.postMessage(msg, '*');
     } catch (e) {
       // fallback to original behavior
       try { window.parent.postMessage(message, '*'); } catch (err) { console.warn('postMessage failed', err, e); }
     }
   }
-  
-  // Notify parent immediately that web view is ready
   sendMessage({ type: 'webViewReady' });
 
   // DOM elements
@@ -29,272 +28,143 @@
   // Game state
   let gameState = null;
   let currentUsername = null;
+  let currentSessionId = null;
   let gameActive = false;
   let refreshInterval = null;
   let timerInterval = null;
-  let selectedDot = null; // Track selected dot for line drawing (mouse only)
+
+  // Interaction state
+  let selectedDot = null;        // chosen endpoint (persistent across taps until cleared or used)
+  let hoverDot = null;           // dot under cursor (desktop)
+  let lastTouchTime = 0;
+  const TOUCH_CLICK_SUPPRESSION_MS = 700;
+
+  // Touch tap detection
+  let touchActive = false;
+  let touchMoved = false;
+  let touchStartTime = 0;
+  let touchStartPos = { x: 0, y: 0 };
+  const TOUCH_TAP_MAX_DURATION = 280; // ms
+  const TOUCH_TAP_MOVE_THRESHOLD = 10; // px
 
   // Three.js variables
   let scene, camera, renderer, raycaster, mouse;
   let dotMeshes = [];
   let lineMeshes = [];
   let boxMeshes = [];
+  let platform = null;
   let isSceneReady = false;
 
   // Camera control variables
-  let isDragging = false;                    // mouse dragging
+  let isDragging = false;
   let previousMousePosition = { x: 0, y: 0 };
   let cameraDistance = 12;
   let cameraTheta = Math.PI / 4;
   let cameraPhi = Math.PI / 3;
 
-  // Touch control variables (separate from mouse)
-  let touchActive = false;                   // set during touch interactions
-  let touchMoved = false;                    // true if finger moved (we treat as rotate)
-  let lastTouchTime = 0;                     // used to suppress synthetic click after touch
-  const TOUCH_CLICK_SUPPRESSION_MS = 700;    // ignore clicks within this many ms after touch
-
-  // New: touch tap detection helpers (to allow drawing via touch)
-  let touchStartTime = 0;
-  let touchStartPos = { x: 0, y: 0 };
-  const TOUCH_TAP_MAX_DURATION = 280; // ms
-  const TOUCH_TAP_MOVE_THRESHOLD = 10; // px
+  // Visual animation
+  let clock = { start: Date.now(), getElapsed: () => (Date.now() - clock.start) / 1000 };
 
   // Game parameters
   const gridSize = 5;
   const dotSpacing = 2;
 
-  // Initialize Three.js scene
+  /* ----------------------
+     Initialize ThreeJS
+     ---------------------- */
   function initThreeJS() {
     if (!canvas) {
       console.error('Canvas not found');
       return;
     }
 
-    // Scene setup
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x1a1a2e);
+    scene.background = new THREE.Color(0x0b1020);
 
-    // Camera setup
-    camera = new THREE.PerspectiveCamera(75, canvas.clientWidth / canvas.clientHeight, 0.1, 1000);
+    // Camera
+    camera = new THREE.PerspectiveCamera(60, canvas.clientWidth / canvas.clientHeight, 0.1, 1000);
     updateCameraPosition();
 
-    // Renderer setup
+    // Renderer
     renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
     renderer.setSize(canvas.clientWidth, canvas.clientHeight);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-    // Lighting
-    const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
-    scene.add(ambientLight);
+    // Lighting for an immersive look
+    const ambient = new THREE.HemisphereLight(0x8088ff, 0x101020, 0.4);
+    scene.add(ambient);
 
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    directionalLight.position.set(5, 10, 7);
-    directionalLight.castShadow = true;
-    scene.add(directionalLight);
+    const keyLight = new THREE.DirectionalLight(0xfff3d7, 0.9);
+    keyLight.position.set(6, 8, 6);
+    keyLight.castShadow = true;
+    keyLight.shadow.mapSize.set(1024, 1024);
+    scene.add(keyLight);
 
-    // Raycaster for mouse interaction
+    const fillLight = new THREE.DirectionalLight(0xdde8ff, 0.35);
+    fillLight.position.set(-6, 4, -6);
+    scene.add(fillLight);
+
+    // Subtle atmosphere (fog)
+    scene.fog = new THREE.FogExp2(0x08101a, 0.02);
+
+    // Raycaster + mouse
     raycaster = new THREE.Raycaster();
     mouse = new THREE.Vector2();
 
-    // Create the dots grid
+    // Create grid, platform and ambient details
     createDotsGrid();
+    createPlatformDetails();
 
-    // Event listeners (mouse)
+    // Event listeners
     canvas.addEventListener('mousedown', onMouseDown, false);
     canvas.addEventListener('mousemove', onMouseMove, false);
     canvas.addEventListener('mouseup', onMouseUp, false);
     canvas.addEventListener('wheel', onMouseWheel, { passive: false });
     canvas.addEventListener('click', onCanvasClick, false);
 
-    // Touch listeners - now support tap-to-draw as well as rotate/pinch
     canvas.addEventListener('touchstart', onTouchStart, { passive: false });
     canvas.addEventListener('touchmove', onTouchMove, { passive: false });
     canvas.addEventListener('touchend', onTouchEnd, { passive: false });
 
     window.addEventListener('resize', onWindowResize);
 
-    // Start render loop
     animate();
 
-    // Hide loading indicator
     if (loadingElem) loadingElem.style.display = 'none';
     isSceneReady = true;
   }
 
-  // Update camera position
   function updateCameraPosition() {
     const x = cameraDistance * Math.sin(cameraPhi) * Math.cos(cameraTheta);
     const z = cameraDistance * Math.sin(cameraPhi) * Math.sin(cameraTheta);
     const y = cameraDistance * Math.cos(cameraPhi);
-    
     if (camera) {
       camera.position.set(x, y, z);
       camera.lookAt(0, 0, 0);
     }
   }
 
-  // Mouse event handlers (desktop)
-  function onMouseDown(event) {
-    if (event.button !== 0) return; // only left button
-    isDragging = true;
-    previousMousePosition = { x: event.clientX, y: event.clientY };
-  }
-
-  function onMouseMove(event) {
-    if (!isDragging) return;
-    const deltaX = event.clientX - previousMousePosition.x;
-    const deltaY = event.clientY - previousMousePosition.y;
-    previousMousePosition = { x: event.clientX, y: event.clientY };
-
-    cameraTheta += deltaX * 0.01;
-    cameraPhi += deltaY * 0.01;
-    cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi));
-    updateCameraPosition();
-  }
-
-  function onMouseUp(/*event*/) {
-    isDragging = false;
-  }
-
-  function onMouseWheel(event) {
-    event.preventDefault();
-    cameraDistance += event.deltaY * 0.01;
-    cameraDistance = Math.max(6, Math.min(20, cameraDistance));
-    updateCameraPosition();
-  }
-
-  // Touch event handlers (mobile): rotate / zoom and now taps draw
-  function onTouchStart(event) {
-    if (!event.touches || event.touches.length === 0) return;
-    touchActive = true;
-    touchMoved = false;
-
-    // capture start time / pos for tap detection
-    touchStartTime = Date.now();
-    touchStartPos = { x: event.touches[0].clientX, y: event.touches[0].clientY };
-
-    // single-finger rotation start
-    if (event.touches.length === 1) {
-      previousMousePosition = { x: event.touches[0].clientX, y: event.touches[0].clientY };
-    }
-
-    // two-finger pinch start: store initial distance for zoom
-    if (event.touches.length === 2) {
-      const t0 = event.touches[0], t1 = event.touches[1];
-      previousMousePosition = {
-        x: (t0.clientX + t1.clientX) / 2,
-        y: (t0.clientY + t1.clientY) / 2,
-        pinchDistance: Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY)
-      };
-      // mark as moved so taps are ignored
-      touchMoved = true;
-    }
-
-    // block the synthetic click that some browsers emit
-    event.preventDefault();
-  }
-
-  function onTouchMove(event) {
-    if (!touchActive) return;
-    if (!event.touches || event.touches.length === 0) return;
-
-    // single-finger -> rotate
-    if (event.touches.length === 1) {
-      const t = event.touches[0];
-      const deltaX = t.clientX - previousMousePosition.x;
-      const deltaY = t.clientY - previousMousePosition.y;
-
-      // if movement exceeds threshold treat as move/rotate
-      if (!touchMoved && (Math.abs(deltaX) > TOUCH_TAP_MOVE_THRESHOLD || Math.abs(deltaY) > TOUCH_TAP_MOVE_THRESHOLD)) {
-        touchMoved = true;
-      }
-
-      previousMousePosition = { x: t.clientX, y: t.clientY };
-
-      if (touchMoved) {
-        cameraTheta += deltaX * 0.01;
-        cameraPhi += deltaY * 0.01;
-        cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi));
-        updateCameraPosition();
-      }
-    }
-
-    // two-finger pinch -> zoom (and rotate by midpoint movement)
-    else if (event.touches.length === 2) {
-      const t0 = event.touches[0], t1 = event.touches[1];
-      const midX = (t0.clientX + t1.clientX) / 2;
-      const midY = (t0.clientY + t1.clientY) / 2;
-      const pinchDistance = Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY);
-
-      const dx = midX - previousMousePosition.x;
-      const dy = midY - previousMousePosition.y;
-      // rotate a little by centroid movement
-      cameraTheta += dx * 0.01;
-      cameraPhi += dy * 0.01;
-      cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi));
-
-      // zoom by pinch ratio
-      if (previousMousePosition.pinchDistance) {
-        const ratio = previousMousePosition.pinchDistance / pinchDistance;
-        cameraDistance *= ratio;
-        cameraDistance = Math.max(6, Math.min(20, cameraDistance));
-      }
-      previousMousePosition = { x: midX, y: midY, pinchDistance };
-      updateCameraPosition();
-
-      touchMoved = true;
-    }
-
-    // prevent scrolling when touching the canvas
-    event.preventDefault();
-  }
-
-  function onTouchEnd(event) {
-    // When the touch sequence ends, record lastTouchTime so subsequent synthetic click is ignored.
-    touchActive = false;
-    lastTouchTime = Date.now();
-
-    // If this was a quick tap (no significant movement) treat it as a tap interaction to draw
-    const duration = Date.now() - touchStartTime;
-    if (!touchMoved && duration <= TOUCH_TAP_MAX_DURATION) {
-      // determine coordinates from changedTouches if available
-      const touch = (event.changedTouches && event.changedTouches[0]) ? event.changedTouches[0] : null;
-      const clientX = touch ? touch.clientX : touchStartPos.x;
-      const clientY = touch ? touch.clientY : touchStartPos.y;
-
-      // call same handler as mouse click (will early-return if not allowed)
-      handleInteraction(clientX, clientY);
-    }
-
-    // ensure selection is cleared if any (only mouse selects)
-    if (selectedDot) {
-      safeSetEmissive(selectedDot, 0x000000);
-      selectedDot = null;
-    }
-
-    // prevent synthetic click: stopPropagation + preventDefault
-    if (event) {
-      try { event.preventDefault(); event.stopPropagation(); } catch (e) {}
-    }
-  }
-
-  // Create dots grid
+  /* ----------------------
+     Create dots & platform
+     ---------------------- */
   function createDotsGrid() {
+    // clear previous dots if any
+    dotMeshes.forEach(m => { try { scene.remove(m); } catch (e) {} });
     dotMeshes = [];
-    
-    const dotGeometry = new THREE.SphereGeometry(0.12, 16, 16);
-    const dotMaterial = new THREE.MeshStandardMaterial({ 
-      color: 0xffffff,
-      roughness: 0.3,
-      metalness: 0.7,
-      emissive: 0x000000
-    });
+
+    const baseGeom = new THREE.SphereGeometry(0.14, 20, 20);
 
     for (let x = 0; x < gridSize; x++) {
       for (let y = 0; y < gridSize; y++) {
-        const dot = new THREE.Mesh(dotGeometry, dotMaterial.clone());
+        const mat = new THREE.MeshStandardMaterial({
+          color: 0xffffff,
+          roughness: 0.25,
+          metalness: 0.8,
+          emissive: 0x000000,
+          emissiveIntensity: 0.8
+        });
+        const dot = new THREE.Mesh(baseGeom, mat);
         dot.position.set(
           (x - (gridSize - 1) / 2) * dotSpacing,
           0,
@@ -302,26 +172,38 @@
         );
         dot.userData = { x: x, y: y };
         dot.castShadow = true;
-        
+        dot.receiveShadow = true;
         scene.add(dot);
         dotMeshes.push(dot);
       }
     }
-
-    // Add base platform
-    const platformGeometry = new THREE.BoxGeometry(gridSize * dotSpacing + 2, 0.2, gridSize * dotSpacing + 2);
-    const platformMaterial = new THREE.MeshStandardMaterial({ 
-      color: 0x333333,
-      roughness: 0.8,
-      metalness: 0.2
-    });
-    const platform = new THREE.Mesh(platformGeometry, platformMaterial);
-    platform.position.y = -0.5;
-    platform.receiveShadow = true;
-    scene.add(platform);
   }
 
-  // Create line between two dots
+  function createPlatformDetails() {
+    if (platform) { try { scene.remove(platform); } catch (e) {} }
+    const g = new THREE.BoxGeometry(gridSize * dotSpacing + 2, 0.25, gridSize * dotSpacing + 2);
+    const m = new THREE.MeshStandardMaterial({
+      color: 0x111827,
+      roughness: 0.85,
+      metalness: 0.2
+    });
+    platform = new THREE.Mesh(g, m);
+    platform.position.y = -0.55;
+    platform.receiveShadow = true;
+    scene.add(platform);
+
+    // rim - a subtle glossy ring
+    const ringGeo = new THREE.RingGeometry( (gridSize * dotSpacing + 2)/2 - 0.2, (gridSize * dotSpacing + 2)/2, 64 );
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0x0b2a40, side: THREE.DoubleSide, transparent: true, opacity: 0.6 });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = -0.44;
+    scene.add(ring);
+  }
+
+  /* ----------------------
+     Lines & Boxes
+     ---------------------- */
   function createLine(x1, y1, x2, y2, player) {
     const start = new THREE.Vector3(
       (x1 - (gridSize - 1) / 2) * dotSpacing,
@@ -336,55 +218,36 @@
 
     const direction = new THREE.Vector3().subVectors(end, start);
     const length = direction.length();
-    
-    const lineGeometry = new THREE.CylinderGeometry(0.03, 0.03, length, 8);
+    const geometry = new THREE.CylinderGeometry(0.04, 0.04, length, 10, 1, true);
     const playerColors = {};
     if (gameState && Array.isArray(gameState.players)) {
-      playerColors[gameState.players[0]] = 0xff4444;
-      playerColors[gameState.players[1]] = 0x4444ff;
+      playerColors[gameState.players[0]] = 0xff6b6b;
+      playerColors[gameState.players[1]] = 0x6b9bff;
     }
-    const lineColor = (player && playerColors[player]) ? playerColors[player] : 0xffffff;
-    
-    const lineMaterial = new THREE.MeshStandardMaterial({ 
-      color: lineColor,
-      roughness: 0.3,
-      metalness: 0.7
-    });
-    
-    const line = new THREE.Mesh(lineGeometry, lineMaterial);
-    
-    // Position and orient the line
+    const color = (player && playerColors[player]) ? playerColors[player] : 0xf7f7f7;
+    const material = new THREE.MeshStandardMaterial({ color, roughness: 0.25, metalness: 0.6, emissive: color, emissiveIntensity: 0.2 });
+
+    const line = new THREE.Mesh(geometry, material);
     const center = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
     line.position.copy(center);
-    // Cylinder in three points its local Y is along its height; orient it from center to end
-    const up = new THREE.Vector3(0, 1, 0);
     line.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.clone().normalize());
     line.castShadow = true;
-    
+
     scene.add(line);
     lineMeshes.push(line);
-    
     return line;
   }
 
-  // Create completed box
   function createBox(x, y, player) {
-    const boxGeometry = new THREE.PlaneGeometry(dotSpacing * 0.8, dotSpacing * 0.8);
+    const boxGeometry = new THREE.PlaneGeometry(dotSpacing * 0.82, dotSpacing * 0.82);
     const playerColors = {};
     if (gameState && Array.isArray(gameState.players)) {
-      playerColors[gameState.players[0]] = 0xff4444;
-      playerColors[gameState.players[1]] = 0x4444ff;
+      playerColors[gameState.players[0]] = 0xff6b6b;
+      playerColors[gameState.players[1]] = 0x6b9bff;
     }
-    const boxColor = (player && playerColors[player]) ? playerColors[player] : 0x888888;
-    
-    const boxMaterial = new THREE.MeshStandardMaterial({ 
-      color: boxColor,
-      transparent: true,
-      opacity: 0.6,
-      side: THREE.DoubleSide
-    });
-    
-    const box = new THREE.Mesh(boxGeometry, boxMaterial);
+    const color = (player && playerColors[player]) ? playerColors[player] : 0x9aa0a6;
+    const material = new THREE.MeshStandardMaterial({ color, transparent: true, opacity: 0.72, side: THREE.DoubleSide });
+    const box = new THREE.Mesh(boxGeometry, material);
     box.position.set(
       (x + 0.5 - (gridSize - 1) / 2) * dotSpacing,
       0.01,
@@ -392,113 +255,304 @@
     );
     box.rotation.x = -Math.PI / 2;
     box.receiveShadow = true;
-    
     scene.add(box);
     boxMeshes.push(box);
-    
     return box;
   }
 
-  // Helper to safely set emissive color (some materials may not have emissive)
-  function safeSetEmissive(mesh, hex) {
+  /* ----------------------
+     Helpers & Visuals
+     ---------------------- */
+  function safeSetEmissive(mesh, hex, intensity = 1) {
     try {
       if (mesh && mesh.material && 'emissive' in mesh.material) {
         mesh.material.emissive.setHex(hex);
+        mesh.material.emissiveIntensity = intensity;
       }
     } catch (e) {}
   }
 
-  // Handle canvas click (mouse only)
-  function onCanvasClick(event) {
-    // Suppress clicks that come immediately after a touch (synthetic clicks)
-    if (Date.now() - lastTouchTime < TOUCH_CLICK_SUPPRESSION_MS) {
+  function scaleDotPulse(dot, t) {
+    if (!dot) return;
+    const base = 1;
+    const pulse = 0.06 * Math.sin(t * 6) + 0.02; // subtle
+    dot.scale.setScalar(base + pulse);
+  }
+
+  // Check if a line already exists in state (either direction)
+  function isLineExists(x1, y1, x2, y2) {
+    if (!gameState || !gameState.dots || !Array.isArray(gameState.dots.lines)) return false;
+    const a = `${x1},${y1},${x2},${y2}`;
+    const b = `${x2},${y2},${x1},${y1}`;
+    return gameState.dots.lines.includes(a) || gameState.dots.lines.includes(b);
+  }
+
+  /* ----------------------
+     Interaction: Mouse
+     ---------------------- */
+  function onMouseDown(event) {
+    if (event.button !== 0) return;
+    isDragging = true;
+    previousMousePosition = { x: event.clientX, y: event.clientY };
+  }
+
+  function onMouseMove(event) {
+    if (!isSceneReady) return;
+
+    // If dragging -> rotate
+    if (isDragging) {
+      const deltaX = event.clientX - previousMousePosition.x;
+      const deltaY = event.clientY - previousMousePosition.y;
+      previousMousePosition = { x: event.clientX, y: event.clientY };
+
+      cameraTheta += deltaX * 0.01;
+      cameraPhi += deltaY * 0.01;
+      cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi));
+      updateCameraPosition();
       return;
     }
-    // If the last interaction was a touch (touchActive recently), do not treat click as drawing.
+
+    // Hover highlighting when not dragging
+    const rect = canvas.getBoundingClientRect();
+    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObjects(dotMeshes, true);
+    if (intersects.length > 0) {
+      const dot = intersects[0].object;
+      if (hoverDot !== dot) {
+        if (hoverDot && hoverDot !== selectedDot) safeSetEmissive(hoverDot, 0x000000, 0.0);
+        hoverDot = dot;
+        if (hoverDot !== selectedDot) safeSetEmissive(hoverDot, 0x3333ff, 0.9);
+      }
+    } else {
+      if (hoverDot && hoverDot !== selectedDot) safeSetEmissive(hoverDot, 0x000000, 0.0);
+      hoverDot = null;
+    }
+  }
+
+  function onMouseUp(/*event*/) {
+    isDragging = false;
+  }
+
+  function onMouseWheel(event) {
+    event.preventDefault();
+    cameraDistance += event.deltaY * 0.01;
+    cameraDistance = Math.max(6, Math.min(20, cameraDistance));
+    updateCameraPosition();
+  }
+
+  // click (desktop) => only if not rotating and not synthetic after touch
+  function onCanvasClick(event) {
+    if (Date.now() - lastTouchTime < TOUCH_CLICK_SUPPRESSION_MS) return;
     if (touchActive) return;
     if (isDragging) return;
     handleInteraction(event.clientX, event.clientY);
   }
 
-  // Handle interaction (mouse/touch taps draw lines)
+  /* ----------------------
+     Interaction: Touch
+     ---------------------- */
+  function onTouchStart(event) {
+    if (!event.touches || event.touches.length === 0) return;
+    touchActive = true;
+    touchMoved = false;
+    touchStartTime = Date.now();
+    touchStartPos = { x: event.touches[0].clientX, y: event.touches[0].clientY };
+
+    if (event.touches.length === 1) {
+      previousMousePosition = { x: event.touches[0].clientX, y: event.touches[0].clientY };
+    } else if (event.touches.length === 2) {
+      const t0 = event.touches[0], t1 = event.touches[1];
+      previousMousePosition = {
+        x: (t0.clientX + t1.clientX) / 2,
+        y: (t0.clientY + t1.clientY) / 2,
+        pinchDistance: Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY)
+      };
+      touchMoved = true; // treat as movement so a tap won't be accidentally triggered
+    }
+    // prevent synthetic click
+    event.preventDefault();
+  }
+
+  function onTouchMove(event) {
+    if (!touchActive) return;
+    if (!event.touches || event.touches.length === 0) return;
+
+    // single -> rotate
+    if (event.touches.length === 1) {
+      const t = event.touches[0];
+      const deltaX = t.clientX - previousMousePosition.x;
+      const deltaY = t.clientY - previousMousePosition.y;
+      if (!touchMoved && (Math.abs(deltaX) > TOUCH_TAP_MOVE_THRESHOLD || Math.abs(deltaY) > TOUCH_TAP_MOVE_THRESHOLD)) {
+        touchMoved = true;
+      }
+      previousMousePosition = { x: t.clientX, y: t.clientY };
+      if (touchMoved) {
+        cameraTheta += deltaX * 0.01;
+        cameraPhi += deltaY * 0.01;
+        cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi));
+        updateCameraPosition();
+      }
+    }
+    // pinch -> zoom + slight rotate
+    else if (event.touches.length === 2) {
+      const t0 = event.touches[0], t1 = event.touches[1];
+      const midX = (t0.clientX + t1.clientX) / 2;
+      const midY = (t0.clientY + t1.clientY) / 2;
+      const pinchDistance = Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY);
+
+      const dx = midX - previousMousePosition.x;
+      const dy = midY - previousMousePosition.y;
+
+      cameraTheta += dx * 0.01;
+      cameraPhi += dy * 0.01;
+      cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi));
+
+      if (previousMousePosition.pinchDistance) {
+        const ratio = previousMousePosition.pinchDistance / pinchDistance;
+        cameraDistance *= ratio;
+        cameraDistance = Math.max(6, Math.min(20, cameraDistance));
+      }
+      previousMousePosition = { x: midX, y: midY, pinchDistance };
+      updateCameraPosition();
+      touchMoved = true;
+    }
+
+    event.preventDefault();
+  }
+
+  function onTouchEnd(event) {
+    touchActive = false;
+    lastTouchTime = Date.now();
+    const duration = Date.now() - touchStartTime;
+
+    // If quick tap (no movement) treat as tap (draw/select)
+    if (!touchMoved && duration <= TOUCH_TAP_MAX_DURATION) {
+      const touch = (event.changedTouches && event.changedTouches[0]) ? event.changedTouches[0] : null;
+      const clientX = touch ? touch.clientX : touchStartPos.x;
+      const clientY = touch ? touch.clientY : touchStartPos.y;
+      handleInteraction(clientX, clientY);
+    }
+
+    // Do not automatically clear selectedDot here — keep selection until user taps elsewhere or a move is made.
+    // Prevent synthetic click
+    if (event) {
+      try { event.preventDefault(); event.stopPropagation(); } catch (e) {}
+    }
+  }
+
+  /* ----------------------
+     Handle selecting/drawing
+     ---------------------- */
+  function getDotAtScreenCoords(clientX, clientY) {
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObjects(dotMeshes, true);
+    return intersects.length > 0 ? intersects[0].object : null;
+  }
+
   function handleInteraction(clientX, clientY) {
     if (!gameState || !gameActive || gameState.status !== 'active' || !isSceneReady) return;
     if (gameState.turn !== currentUsername) return;
 
-    const rect = canvas.getBoundingClientRect();
-    mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1;
-    mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1;
-
-    raycaster.setFromCamera(mouse, camera);
-    const intersects = raycaster.intersectObjects(dotMeshes, true);
-
-    if (intersects.length > 0) {
-      const dot = intersects[0].object;
-      
-      // Only mouse interactions previously controlled selectedDot, but now touch taps use same logic
-      if (!selectedDot) {
-        // First dot selection
-        selectedDot = dot;
-        safeSetEmissive(selectedDot, 0x00ff00); // Green highlight
-      } else if (selectedDot === dot) {
-        // Deselect the same dot
-        safeSetEmissive(selectedDot, 0x000000);
+    const dot = getDotAtScreenCoords(clientX, clientY);
+    if (!dot) {
+      // If user tapped away from dots -> clear selectedDot
+      if (selectedDot) {
+        safeSetEmissive(selectedDot, 0x000000, 0.0);
         selectedDot = null;
-      } else {
-        // Second dot selection - attempt to draw line
-        const dot1 = selectedDot.userData;
-        const dot2 = dot.userData;
-        
-        // Check if dots are adjacent
-        const dx = Math.abs(dot2.x - dot1.x);
-        const dy = Math.abs(dot2.y - dot1.y);
-        
-        if ((dx === 1 && dy === 0) || (dx === 0 && dy === 1)) {
-          // Valid adjacent dots - send move
-          const lineKey = `${dot1.x},${dot1.y},${dot2.x},${dot2.y}`;
-          
-          sendMessage({
-            type: 'makeMove',
-            data: {
-              username: currentUsername,
-              position: lineKey,
-              gameType: 'dots'
-            }
-          });
-          
-          // Clear selection
-          safeSetEmissive(selectedDot, 0x000000);
-          selectedDot = null;
-        } else {
-          // Invalid selection - highlight error briefly
-          safeSetEmissive(dot, 0xff0000);
-          setTimeout(() => {
-            safeSetEmissive(dot, 0x000000);
-          }, 500);
-          
-          // Keep first dot selected
-        }
       }
+      return;
     }
+
+    // If no selected endpoint -> pick this one
+    if (!selectedDot) {
+      selectedDot = dot;
+      safeSetEmissive(selectedDot, 0x00ff66, 1.2);
+      return;
+    }
+
+    // If same dot tapped -> deselect
+    if (selectedDot === dot) {
+      safeSetEmissive(selectedDot, 0x000000, 0.0);
+      selectedDot = null;
+      return;
+    }
+
+    // Attempt to create a line between selectedDot and dot
+    const d1 = selectedDot.userData;
+    const d2 = dot.userData;
+
+    const dx = Math.abs(d2.x - d1.x);
+    const dy = Math.abs(d2.y - d1.y);
+    const adjacent = (dx === 1 && dy === 0) || (dx === 0 && dy === 1);
+
+    if (!adjacent) {
+      // invalid: briefly flash both red
+      safeSetEmissive(dot, 0xff3333, 1.0);
+      safeSetEmissive(selectedDot, 0xff3333, 1.0);
+      setTimeout(() => {
+        if (selectedDot) safeSetEmissive(selectedDot, 0x00ff66, 1.2); // restore selected
+        safeSetEmissive(dot, 0x000000, 0.0);
+      }, 450);
+      return;
+    }
+
+    // Check duplicate
+    if (isLineExists(d1.x, d1.y, d2.x, d2.y)) {
+      // already exists: brief yellow flash
+      safeSetEmissive(dot, 0xffcc00, 1.0);
+      setTimeout(() => safeSetEmissive(dot, 0x000000, 0.0), 400);
+      // keep the selectedDot (user may want to pick another)
+      return;
+    }
+
+    // Otherwise valid: send move to parent
+    const lineKey = `${d1.x},${d1.y},${d2.x},${d2.y}`;
+    sendMessage({
+      type: 'makeMove',
+      data: {
+        username: currentUsername,
+        position: lineKey,
+        gameType: GAME_TYPE
+      }
+    });
+
+    // provide immediate local feedback: create a temporary line & small flash
+    createLine(d1.x, d1.y, d2.x, d2.y, currentUsername || 'local');
+    safeSetEmissive(selectedDot, 0x33ff88, 1.0);
+    safeSetEmissive(dot, 0x33ff88, 0.9);
+    setTimeout(() => {
+      if (selectedDot) safeSetEmissive(selectedDot, 0x000000, 0.0);
+      safeSetEmissive(dot, 0x000000, 0.0);
+      selectedDot = null;
+      // rely on server update to draw final state (boxes, colors, persistent lines)
+    }, 250);
   }
 
-  // Update scene based on game state
+  /* ----------------------
+     Scene updates from gameState
+     ---------------------- */
   function updateScene() {
     if (!gameState || !isSceneReady) return;
 
-    // Clear existing lines and boxes
-    lineMeshes.forEach(line => { try { scene.remove(line); } catch (e) {} });
-    boxMeshes.forEach(box => { try { scene.remove(box); } catch (e) {} });
+    // Clear lines & boxes
+    lineMeshes.forEach(l => { try { scene.remove(l); } catch (e) {} });
+    boxMeshes.forEach(b => { try { scene.remove(b); } catch (e) {} });
     lineMeshes = [];
     boxMeshes = [];
 
-    // Draw lines (from gameState.dots.lines)
+    // Draw lines
     if (gameState.dots && Array.isArray(gameState.dots.lines)) {
       gameState.dots.lines.forEach(lineKey => {
         const coords = (typeof lineKey === 'string' ? lineKey : '').split(',').map(Number);
         if (coords.length === 4) {
           const [x1, y1, x2, y2] = coords;
-          // pass player if stored as system uses a string; we ignore if not available
+          // pass player if available
           createLine(x1, y1, x2, y2, 'system');
         }
       });
@@ -516,21 +570,41 @@
     }
   }
 
-  // Animation loop
+  /* ----------------------
+     Render loop
+     ---------------------- */
   function animate() {
     requestAnimationFrame(animate);
+
+    // animate selected dot pulse
+    const t = clock.getElapsed();
+    if (selectedDot) scaleDotPulse(selectedDot, t);
+    if (hoverDot && hoverDot !== selectedDot) {
+      // slight bob on hover
+      const bob = 1 + 0.03 * Math.sin(t * 4);
+      hoverDot.scale.setScalar(bob);
+    } else {
+      // reset scales for non selected non-hover dots gradually
+      dotMeshes.forEach(d => {
+        if (d !== selectedDot && d !== hoverDot) {
+          d.scale.lerp(new THREE.Vector3(1,1,1), 0.08);
+        }
+      });
+    }
+
     if (isSceneReady && renderer && scene && camera) renderer.render(scene, camera);
   }
 
-  // Handle window resize
+  /* ----------------------
+     Window / UI helpers
+     ---------------------- */
   function onWindowResize() {
-    if (!isSceneReady || !camera || !renderer || !canvas) return;
+    if (!camera || !renderer || !canvas) return;
     camera.aspect = canvas.clientWidth / canvas.clientHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(canvas.clientWidth, canvas.clientHeight);
   }
 
-  // Auto-refresh game state
   function startAutoRefresh() {
     if (refreshInterval) clearInterval(refreshInterval);
     refreshInterval = setInterval(() => {
@@ -541,7 +615,6 @@
     }, 3000);
   }
 
-  // Start turn timer
   function startTurnTimer() {
     if (timerInterval) clearInterval(timerInterval);
     timerInterval = setInterval(() => {
@@ -549,16 +622,13 @@
     }, 1000);
   }
 
-  // Show game end modal
   function showGameEndModal(winner, isDraw, reason) {
     const modal = document.createElement('div');
     modal.className = 'modal';
-    
     let modalClass = '';
     let title = '';
     let message = '';
     let emoji = '';
-    
     if (isDraw) {
       modalClass = 'draw-modal';
       title = "It's a Draw! 🤝";
@@ -573,15 +643,13 @@
     } else {
       modalClass = 'lose-modal';
       title = "Game Over 😔";
-      if (reason === 'timeout') {
-        message = `Time's up! ${winner} wins by timeout.`;
-      } else {
+      if (reason === 'timeout') message = `Time's up! ${winner} wins by timeout.`;
+      else {
         const winnerScore = gameState?.dots?.scores?.[winner] || 0;
         message = `${winner} captured ${winnerScore} boxes! Better luck next time.`;
       }
       emoji = '😔';
     }
-    
     modal.innerHTML = `
       <div class="modal-content ${modalClass}">
         <h2>${emoji} ${title} ${emoji}</h2>
@@ -589,7 +657,6 @@
         <button id="playAgainBtn">Play Again</button>
       </div>
     `;
-    
     document.body.appendChild(modal);
     const playBtn = document.getElementById('playAgainBtn');
     if (playBtn) {
@@ -598,25 +665,16 @@
         sendMessage({ type: 'requestGameState' });
       });
     }
-    
-    setTimeout(() => {
-      if (modal.parentNode) modal.remove();
-    }, 5000);
+    setTimeout(() => { if (modal.parentNode) modal.remove(); }, 5000);
   }
 
-  // Update game status display
   function updateStatus() {
     if (!gameState) {
-      if (statusElem) {
-        statusElem.textContent = 'Loading...';
-        statusElem.className = 'status-display-3d';
-      }
+      if (statusElem) { statusElem.textContent = 'Loading...'; statusElem.className = 'status-display-3d'; }
       return;
     }
-
     if (!statusElem) return;
     statusElem.className = 'status-display-3d';
-
     if (gameState.status === 'waiting') {
       statusElem.textContent = `⏳ Waiting for players... (${gameState.players.length}/${gameState.maxPlayers})`;
       statusElem.style.background = '';
@@ -627,26 +685,17 @@
       const opponentScore = gameState.players
         .filter(p => p !== currentUsername)
         .reduce((max, p) => Math.max(max, gameState.dots?.scores?.[p] || 0), 0);
-      
-      statusElem.textContent = isMyTurn 
-        ? `🎯 Your turn - Boxes: You ${myScore}, Opponent ${opponentScore}` 
+      statusElem.textContent = isMyTurn
+        ? `🎯 Your turn - Boxes: You ${myScore}, Opponent ${opponentScore}`
         : `⏳ ${gameState.turn}'s turn - Boxes: You ${myScore}, Opponent ${opponentScore}`;
-      
-      if (isMyTurn) {
-        statusElem.style.background = 'rgba(40, 167, 69, 0.95)';
-        statusElem.style.color = 'white';
-      } else {
-        statusElem.style.background = 'rgba(255, 255, 255, 0.95)';
-        statusElem.style.color = '#333';
-      }
+      if (isMyTurn) { statusElem.style.background = 'rgba(40, 167, 69, 0.95)'; statusElem.style.color = 'white'; }
+      else { statusElem.style.background = 'rgba(255, 255, 255, 0.95)'; statusElem.style.color = '#333'; }
     } else if (gameState.status === 'finished') {
       const winnerScore = gameState.dots?.scores?.[gameState.winner] || 0;
-      statusElem.textContent = gameState.winner === currentUsername 
-        ? `🏆 You won with ${winnerScore} boxes!` 
+      statusElem.textContent = gameState.winner === currentUsername
+        ? `🏆 You won with ${winnerScore} boxes!`
         : `😔 ${gameState.winner} won with ${winnerScore} boxes!`;
-      statusElem.style.background = gameState.winner === currentUsername 
-        ? 'rgba(40, 167, 69, 0.95)'
-        : 'rgba(220, 53, 69, 0.95)';
+      statusElem.style.background = gameState.winner === currentUsername ? 'rgba(40, 167, 69, 0.95)' : 'rgba(220, 53, 69, 0.95)';
       statusElem.style.color = 'white';
     } else if (gameState.status === 'draw') {
       statusElem.textContent = "🤝 It's a draw!";
@@ -655,31 +704,22 @@
     }
   }
 
-  // Update timer display
   function updateTimer(timeRemaining, currentTurn) {
     if (!timerElem) return;
-    
     if (gameState && gameState.status === 'active' && gameState.players.length >= 2 && gameState.firstMoveMade) {
       timerElem.style.display = 'block';
       timerElem.className = 'timer-display-3d';
       timerElem.textContent = `⏰ ${timeRemaining}s - ${currentTurn}'s turn`;
-      
-      if (timeRemaining <= 10) {
-        timerElem.style.background = 'rgba(220, 53, 69, 0.95)';
-      } else {
-        timerElem.style.background = 'rgba(255, 107, 107, 0.95)';
-      }
+      if (timeRemaining <= 10) timerElem.style.background = 'rgba(220, 53, 69, 0.95)';
+      else timerElem.style.background = 'rgba(255, 107, 107, 0.95)';
     } else {
       timerElem.style.display = 'none';
     }
   }
 
-  // Update players info
   function updatePlayersInfo() {
     if (!gameState || !playersElem) return;
-    
     playersElem.className = 'status-display-3d';
-    
     if (!Array.isArray(gameState.players) || gameState.players.length === 0) {
       playersElem.textContent = '👥 No players yet';
     } else {
@@ -692,161 +732,108 @@
     }
   }
 
-  // Handle messages from parent
+  /* ----------------------
+     Message handling
+     ---------------------- */
   function handleMessage(event) {
     let message = event.data;
     if (!message) return;
     if (message.type === 'devvit-message' && message.data && message.data.message) {
       message = message.data.message;
     }
-
     if (!message || !message.type) return;
-    
+
     switch (message.type) {
       case 'initialData':
         currentUsername = message.data && message.data.username;
+        currentSessionId = message.data && message.data.sessionId;
         sendMessage({ type: 'initializeGame' });
         sendMessage({ type: 'requestGameState' });
         break;
-
       case 'gameState':
         gameState = message.data;
         gameActive = gameState.status === 'active';
-        // Stop selection if something changed
-        if (selectedDot) {
-          safeSetEmissive(selectedDot, 0x000000);
-          selectedDot = null;
-        }
         updateScene();
         updateStatus();
         updatePlayersInfo();
-        
+        // auto-join if needed
         if (!Array.isArray(gameState.players) || !gameState.players.includes(currentUsername)) {
-          sendMessage({
-            type: 'joinGame',
-            data: { username: currentUsername }
-          });
-        } else if (gameActive) {
-          startAutoRefresh();
-          startTurnTimer();
-        }
+          sendMessage({ type: 'joinGame', data: { username: currentUsername } });
+        } else if (gameActive) { startAutoRefresh(); startTurnTimer(); }
         break;
-
       case 'playerJoined':
         if (message.data && message.data.gameState) {
           gameState = message.data.gameState;
           gameActive = gameState.status === 'active';
-          if (selectedDot) {
-            safeSetEmissive(selectedDot, 0x000000);
-            selectedDot = null;
-          }
-          updateScene();
-          updateStatus();
-          updatePlayersInfo();
-          
-          if (gameActive && gameState.players.includes(currentUsername)) {
-            startAutoRefresh();
-            startTurnTimer();
-          }
+          updateScene(); updateStatus(); updatePlayersInfo();
+          if (gameActive && gameState.players.includes(currentUsername)) { startAutoRefresh(); startTurnTimer(); }
         }
         break;
-
       case 'gameStarted':
         gameActive = true;
         if (message.data && message.data.gameState) {
           gameState = message.data.gameState;
-          updateScene();
-          updateStatus();
-          updatePlayersInfo();
+          updateScene(); updateStatus(); updatePlayersInfo();
         }
         if (gameActive && gameState && Array.isArray(gameState.players) && gameState.players.includes(currentUsername)) {
-          startAutoRefresh();
-          startTurnTimer();
+          startAutoRefresh(); startTurnTimer();
         }
         break;
-
       case 'gameUpdate':
       case 'moveMade':
         if (message.data && (message.data.gameState || message.data)) {
           gameState = message.data.gameState || message.data;
           gameActive = gameState.status === 'active';
+          // keep selection as user experience; if server changed something that invalidates selection, clear it
           if (selectedDot) {
-            safeSetEmissive(selectedDot, 0x000000);
-            selectedDot = null;
+            // if selected dot coordinates no longer valid, clear
+            const { x, y } = selectedDot.userData || {};
+            if (typeof x !== 'number' || typeof y !== 'number' || x < 0 || y < 0) {
+              safeSetEmissive(selectedDot, 0x000000); selectedDot = null;
+            }
           }
-          updateScene();
-          updateStatus();
-          updatePlayersInfo();
+          updateScene(); updateStatus(); updatePlayersInfo();
         }
         break;
-
       case 'turnChanged':
-        if (selectedDot) {
-          safeSetEmissive(selectedDot, 0x000000);
-          selectedDot = null;
-        }
-        updateStatus();
-        break;
-
+        updateStatus(); break;
       case 'timerUpdate':
         if (message.data) updateTimer(message.data.timeRemaining, message.data.currentTurn);
         break;
-
       case 'gameEnded':
         gameActive = false;
-        if (selectedDot) {
-          safeSetEmissive(selectedDot, 0x000000);
-          selectedDot = null;
-        }
         if (refreshInterval) clearInterval(refreshInterval);
         if (timerInterval) clearInterval(timerInterval);
-
         if (message.data && message.data.finalState) {
           gameState = message.data.finalState;
-          updateScene();
-          updateStatus();
-          updatePlayersInfo();
+          updateScene(); updateStatus(); updatePlayersInfo();
         }
         setTimeout(() => {
           showGameEndModal(message.data && message.data.winner, message.data && message.data.isDraw, message.data && message.data.reason);
         }, 500);
         break;
-
       case 'error':
-        if (selectedDot) {
-          safeSetEmissive(selectedDot, 0x000000);
-          selectedDot = null;
-        }
         if (statusElem) {
           statusElem.textContent = `❌ Error: ${message.message || (message.data && message.data.message) || 'unknown'}`;
           statusElem.className = 'status-display-3d';
           statusElem.style.background = 'rgba(220, 53, 69, 0.95)';
           statusElem.style.color = 'white';
+          setTimeout(() => { updateStatus(); }, 3000);
         }
         break;
     }
   }
 
-  // Add event listeners
   window.addEventListener('message', handleMessage);
-  document.addEventListener('DOMContentLoaded', () => {
-    sendMessage({ type: 'webViewReady' });
-  });
-
-  // Request fresh game state when tab becomes visible (helps with reconnection)
+  document.addEventListener('DOMContentLoaded', () => sendMessage({ type: 'webViewReady' }));
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && currentUsername) {
-      sendMessage({ type: 'requestGameState' });
-    }
+    if (!document.hidden && currentUsername) sendMessage({ type: 'requestGameState' });
   });
 
   if (restartBtn) {
-    restartBtn.addEventListener('click', () => {
-      sendMessage({ type: 'requestGameState' });
-    });
+    restartBtn.addEventListener('click', () => sendMessage({ type: 'requestGameState' }));
   }
 
-  // Initialize Three.js when DOM is loaded
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initThreeJS);
   } else {

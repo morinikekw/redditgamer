@@ -17,18 +17,18 @@ export type DevvitMessage =
 
 /** Message from the web view to Devvit. */
 export type WebViewMessage =
-  | { type: 'webViewReady' }
-  | { type: 'unmount' }
-  | { type: 'setCounter'; data: { newCounter: number } }
-  | { type: 'initializeGame' }
-  | { type: 'joinGame'; data: { username: string } }
-  | { type: 'makeMove'; data: { username: string; position: any; gameType: string; promotion?: string } }
-  | { type: 'leaveGame'; data: { username: string } }
-  | { type: 'requestGameState' }
-  | { type: 'restartGame' }
-  | { type: 'checkTurnTimer' }
-  | { type: 'updateScore'; data: { username: string; score: number; avgTime: number; medianTime: number } }
-  | { type: 'getReactionScores' };
+  | { type: 'webViewReady'; data?: { gameType?: string; sessionId?: string } }
+  | { type: 'unmount'; data?: { gameType?: string; sessionId?: string } }
+  | { type: 'setCounter'; data: { newCounter: number; gameType?: string; sessionId?: string } }
+  | { type: 'initializeGame'; data?: { gameType?: string; sessionId?: string } }
+  | { type: 'joinGame'; data: { username: string; gameType?: string; sessionId?: string } }
+  | { type: 'makeMove'; data: { username: string; position: any; gameType: string; sessionId?: string; promotion?: string } }
+  | { type: 'leaveGame'; data: { username: string; gameType?: string; sessionId?: string } }
+  | { type: 'requestGameState'; data?: { gameType?: string; sessionId?: string } }
+  | { type: 'restartGame'; data?: { gameType?: string; sessionId?: string } }
+  | { type: 'checkTurnTimer'; data?: { gameType?: string; sessionId?: string } }
+  | { type: 'updateScore'; data: { username: string; score: number; avgTime: number; medianTime: number; gameType?: string; sessionId?: string } }
+  | { type: 'getReactionScores'; data?: { gameType?: string; sessionId?: string } };
 
 /**
  * Devvit system message wrapper.

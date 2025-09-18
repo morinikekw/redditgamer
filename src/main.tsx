@@ -132,7 +132,8 @@ Devvit.addCustomPostType({
             // use explicit names to avoid confusion with captured `selectedGame`
             const redis = context.redis;
             const postId = context.postId!;
-            // determine gameType & sessionId from incoming message first (prefer explicit)
+            
+            // Extract gameType and sessionId from message data
             const incomingGameType = message?.data?.gameType as string | undefined;
             const gameType = incomingGameType ?? selectedGame ?? 'tictactoe';
             const sessionIdFromMsg = message?.data?.sessionId as string | undefined;
@@ -262,6 +263,18 @@ Devvit.addCustomPostType({
                     const position = payload.position;
                     const payloadGameType = payload.gameType ?? gameType;
                     const payloadSessionId = payload.sessionId ?? sessionId;
+
+                    // CRITICAL: Validate gameType matches stored session
+                    const storedGameState = await GameAPI.getGameState(redis, payloadSessionId);
+                    if (storedGameState.currentGame !== payloadGameType) {
+                      webViewInstance.postMessage({
+                        type: 'error',
+                        code: 400,
+                        message: `Action game "${payloadGameType}" does not match stored session game "${storedGameState.currentGame}". Make sure you use the sessionId for the correct game type.`,
+                        recoverable: false,
+                      });
+                      return;
+                    }
 
                     // validate
                     if (!position) {
@@ -524,7 +537,9 @@ Devvit.addCustomPostType({
 
                 case 'unmount': {
                   try {
-                    unregisterConnection(postId, gameType, webViewInstance);
+                    // Use the gameType from the message data if available, otherwise fall back to selectedGame
+                    const unmountGameType = message?.data?.gameType ?? selectedGame ?? gameType;
+                    unregisterConnection(postId, unmountGameType, webViewInstance);
                     webViewInstance.unmount();
                   } catch (err) { /* ignore */ }
                   break;
