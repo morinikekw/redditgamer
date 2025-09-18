@@ -92,7 +92,21 @@ Devvit.addCustomPostType({
       cardBg: isDark ? '#272729' : '#FFFFFF',
       border: isDark ? '#343536' : '#EDEFF1',
       primary: '#FF4500',
-      secondary: isDark ? '#DAE0E6' : '#878A8C'
+      secondary: isDark ? '#DAE0E6' : '#878A8C',
+      // Enhanced color palette for beautiful UI
+      gradientStart: isDark ? '#667eea' : '#764ba2',
+      gradientEnd: isDark ? '#764ba2' : '#667eea',
+      cardGradient: isDark ? 'linear-gradient(135deg, #2d3748 0%, #4a5568 100%)' : 'linear-gradient(135deg, #ffffff 0%, #f7fafc 100%)',
+      gameButton1: '#FF6B6B', // Tic Tac Toe - Coral Red
+      gameButton2: '#4ECDC4', // Gomoku - Turquoise
+      gameButton3: '#45B7D1', // Connect Four - Sky Blue
+      gameButton4: '#9B59B6', // Dots & Boxes - Purple
+      gameButton5: '#8B4513', // Chess - Brown
+      gameButton6: '#F7DC6F', // Reaction Speed - Golden Yellow
+      joinButton: '#28a745',  // Success Green
+      backButton: '#dc3545',  // Danger Red
+      shadow: isDark ? 'rgba(0, 0, 0, 0.3)' : 'rgba(0, 0, 0, 0.1)',
+      shadowHeavy: isDark ? 'rgba(0, 0, 0, 0.5)' : 'rgba(0, 0, 0, 0.2)'
     };
 
     // lazy get username
@@ -588,67 +602,79 @@ Devvit.addCustomPostType({
             </text>
             <spacer />
 
-            <vstack backgroundColor={colors.cardBg} padding="medium" cornerRadius="medium" border={`1px solid ${colors.border}`}>
+            <vstack backgroundColor={colors.cardBg} padding="large" cornerRadius="large" border={`2px solid ${colors.gradientStart}`} shadow={`0 8px 32px ${colors.shadowHeavy}`}>
               <hstack gap="small" alignment="center middle">
-                <text size="medium" fontFamily="Open Sans" color={colors.secondary}>🧑‍💻 Player:</text>
-                <text size="medium" weight="bold" fontFamily="Open Sans" color={colors.primary}>{username ?? ''}</text>
+                <text size="large" fontFamily="Roboto" color={colors.secondary}>🧑‍💻 Player:</text>
+                <text size="large" weight="bold" fontFamily="Roboto" color={colors.primary}>{username ?? ''}</text>
               </hstack>
               <hstack gap="small" alignment="center middle">
-                <text size="medium" fontFamily="Open Sans" color={colors.secondary}>📊 Interactions:</text>
-                <text size="medium" weight="bold" fontFamily="Open Sans" color={colors.primary}>{counter ?? ''}</text>
+                <text size="large" fontFamily="Roboto" color={colors.secondary}>📊 Interactions:</text>
+                <text size="large" weight="bold" fontFamily="Roboto" color={colors.primary}>{counter ?? ''}</text>
               </hstack>
             </vstack>
 
             <spacer />
 
             {!selectedGame ? (
-              <vstack alignment="middle center" gap="large">
-                <text size="large" weight="bold" fontFamily="Roboto" color={colors.text}>
+              <vstack alignment="middle center" gap="large" backgroundColor={colors.cardGradient} padding="xlarge" cornerRadius="xlarge" border={`3px solid ${colors.gradientStart}`} shadow={`0 12px 48px ${colors.shadowHeavy}`}>
+                <text size="xlarge" weight="bold" fontFamily="Roboto" color={colors.gradientStart}>
                   🎯 Choose Your Game
                 </text>
-                <text size="medium" fontFamily="Open Sans" color={colors.secondary} textAlign="center">
-                  Select a game to challenge other Reddit users!
+                <text size="large" fontFamily="Roboto" color={colors.secondary} textAlign="center" weight="medium">
+                  ✨ Select a game to challenge other Reddit users! ✨
                 </text>
 
                 <vstack gap="medium" width="100%">
                   <hstack gap="medium" width="100%" alignment="center middle">
-                    <button appearance="primary" onPress={() => setSelectedGame('tictactoe')} size="large" textColor="#ffffff" backgroundColor="#FF6B6B" cornerRadius="medium">⭕ Tic Tac Toe (2P)</button>
-                    <button appearance="primary" onPress={() => setSelectedGame('gomoku')} size="large" textColor="#ffffff" backgroundColor="#4ECDC4" cornerRadius="medium">⚫ Gomoku (2P)</button>
+                    <button appearance="custom" onPress={() => setSelectedGame('tictactoe')} size="large" textColor="#ffffff" backgroundColor={colors.gameButton1} cornerRadius="large" shadow={`0 6px 20px ${colors.shadow}`} fontWeight="bold">⭕ Tic Tac Toe (2P)</button>
+                    <button appearance="custom" onPress={() => setSelectedGame('gomoku')} size="large" textColor="#ffffff" backgroundColor={colors.gameButton2} cornerRadius="large" shadow={`0 6px 20px ${colors.shadow}`} fontWeight="bold">⚫ Gomoku (2P)</button>
                   </hstack>
                   <hstack gap="medium" width="100%" alignment="center middle">
-                    <button appearance="primary" onPress={() => setSelectedGame('connect4')} size="large" textColor="#ffffff" backgroundColor="#45B7D1" cornerRadius="medium">🔴 Connect Four (2P)</button>
-                    <button appearance="primary" onPress={() => setSelectedGame('dots')} size="large" textColor="#ffffff" backgroundColor="#9B59B6" cornerRadius="medium">📦 Dots & Boxes (2P)</button>
+                    <button appearance="custom" onPress={() => setSelectedGame('connect4')} size="large" textColor="#ffffff" backgroundColor={colors.gameButton3} cornerRadius="large" shadow={`0 6px 20px ${colors.shadow}`} fontWeight="bold">🔴 Connect Four (2P)</button>
+                    <button appearance="custom" onPress={() => setSelectedGame('dots')} size="large" textColor="#ffffff" backgroundColor={colors.gameButton4} cornerRadius="large" shadow={`0 6px 20px ${colors.shadow}`} fontWeight="bold">📦 Dots & Boxes (2P)</button>
                   </hstack>
                   <hstack gap="medium" width="100%" alignment="center middle">
-                    <button appearance="primary" onPress={() => setSelectedGame('chess')} size="large" textColor="#ffffff" backgroundColor="#8B4513" cornerRadius="medium">♛ Chess (2P)</button>
-                    <button appearance="primary" onPress={() => setSelectedGame('reaction')} size="large" textColor="#ffffff" backgroundColor="#F7DC6F" cornerRadius="medium">⚡ Reaction Speed</button>
+                    <button appearance="custom" onPress={() => setSelectedGame('chess')} size="large" textColor="#ffffff" backgroundColor={colors.gameButton5} cornerRadius="large" shadow={`0 6px 20px ${colors.shadow}`} fontWeight="bold">♛ Chess (2P)</button>
+                    <button appearance="custom" onPress={() => setSelectedGame('reaction')} size="large" textColor="#333333" backgroundColor={colors.gameButton6} cornerRadius="large" shadow={`0 6px 20px ${colors.shadow}`} fontWeight="bold">⚡ Reaction Speed</button>
                   </hstack>
                 </vstack>
 
-                <vstack gap="none" alignment="center middle">
-                  <text size="small" fontFamily="Open Sans" color={colors.secondary} textAlign="center">
-                    💡 Tip: 30 seconds per turn after first move!
+                <vstack gap="small" alignment="center middle" backgroundColor={colors.cardBg} padding="medium" cornerRadius="medium" border={`1px solid ${colors.border}`}>
+                  <text size="medium" fontFamily="Roboto" color={colors.gradientStart} textAlign="center" weight="bold">
+                    💡 Pro Tips
                   </text>
-                  <text size="small" fontFamily="Open Sans" color={colors.secondary} textAlign="center">
-                    Reaction game: 20 seconds per game!
+                  <text size="small" fontFamily="Roboto" color={colors.secondary} textAlign="center">
+                    ⏱️ 30 seconds per turn after first move!
+                  </text>
+                  <text size="small" fontFamily="Roboto" color={colors.secondary} textAlign="center">
+                    ⚡ Reaction game: 20 seconds per game!
                   </text>
                 </vstack>
               </vstack>
             ) : (
-              <vstack alignment="middle center" gap="medium" backgroundColor={colors.cardBg} padding="large" cornerRadius="medium" border={`2px solid ${colors.primary}`}>
-                <text size="large" weight="bold" fontFamily="Roboto" color={colors.text}>
-                  🎮 {selectedGame.charAt(0).toUpperCase() + selectedGame.slice(1)}
+              <vstack alignment="middle center" gap="large" backgroundColor={colors.cardGradient} padding="xlarge" cornerRadius="xlarge" border={`3px solid ${colors.gradientStart}`} shadow={`0 12px 48px ${colors.shadowHeavy}`}>
+                <text size="xxlarge" weight="bold" fontFamily="Roboto" color={colors.gradientStart}>
+                  🎮 {selectedGame.charAt(0).toUpperCase() + selectedGame.slice(1)} 🎮
                 </text>
-                <text size="medium" fontFamily="Open Sans" color={colors.secondary} textAlign="center">
+                <text size="large" fontFamily="Roboto" color={colors.secondary} textAlign="center" weight="medium">
                   {selectedGame === 'reaction' ? 'Click to start playing!' : 'Join to play - Wait for another player to join'}
                 </text>
-                <text size="small" fontFamily="Open Sans" color={colors.secondary} textAlign="center">
+                <text size="medium" fontFamily="Roboto" color={colors.secondary} textAlign="center">
                   {selectedGame === 'reaction' ? '⏱️ 20 seconds per game' : '⏱️ 30 seconds per turn after first move'}
                 </text>
-                <hstack gap="medium">
-                  <button appearance="primary" onPress={() => webView?.mount()} size="large" textColor="#ffffff" backgroundColor="#28a745" cornerRadius="medium">🚀 Join Game</button>
-                  <button appearance="secondary" onPress={() => setSelectedGame(null)} size="large" textColor="#ffffff" backgroundColor="#dc3545" cornerRadius="medium">⬅️ Back</button>
+                <hstack gap="large">
+                  <button appearance="custom" onPress={() => webView?.mount()} size="large" textColor="#ffffff" backgroundColor={colors.joinButton} cornerRadius="large" shadow={`0 8px 24px ${colors.shadow}`} fontWeight="bold">🚀 Join Game</button>
+                  <button appearance="custom" onPress={() => setSelectedGame(null)} size="large" textColor="#ffffff" backgroundColor={colors.backButton} cornerRadius="large" shadow={`0 8px 24px ${colors.shadow}`} fontWeight="bold">⬅️ Back</button>
                 </hstack>
+                
+                <vstack gap="small" alignment="center middle" backgroundColor={colors.cardBg} padding="medium" cornerRadius="medium" border={`1px solid ${colors.border}`}>
+                  <text size="medium" fontFamily="Roboto" color={colors.gradientStart} textAlign="center" weight="bold">
+                    🌟 Get Ready for Epic Battles! 🌟
+                  </text>
+                  <text size="small" fontFamily="Roboto" color={colors.secondary} textAlign="center">
+                    Challenge Reddit users worldwide in real-time multiplayer action!
+                  </text>
+                </vstack>
               </vstack>
             )}
           </vstack>

@@ -12,6 +12,7 @@
 
   // Local state for the game.
   let gameState = null;
+  let currentCounter = 0;
 
   // Function to send messages to the parent Devvit app.
   function sendMessage(message) {
@@ -68,6 +69,18 @@
     renderGame();
   }
 
+  // Handle initial data and increment counter
+  function handleInitialData(data) {
+    if (data && typeof data.currentCounter === 'number') {
+      currentCounter = data.currentCounter;
+    }
+    // Increment counter for initial webview load
+    sendMessage({
+      type: 'setCounter',
+      data: { newCounter: currentCounter + 1 }
+    });
+  }
+
   // Send a move message when a cell is clicked.
   function handleMove(position) {
     if (!gameState || !gameState.currentGame) return;
@@ -83,24 +96,48 @@
 
   // Attach event listeners to game selection buttons.
   btnTictactoe.addEventListener('click', () => {
+    // Increment counter before changing game
+    currentCounter++;
+    sendMessage({
+      type: 'setCounter',
+      data: { newCounter: currentCounter }
+    });
     sendMessage({
       type: 'gameAction',
       data: { type: 'changeGame', game: 'tictactoe' }
     });
   });
   btnGomoku.addEventListener('click', () => {
+    // Increment counter before changing game
+    currentCounter++;
+    sendMessage({
+      type: 'setCounter',
+      data: { newCounter: currentCounter }
+    });
     sendMessage({
       type: 'gameAction',
       data: { type: 'changeGame', game: 'gomoku' }
     });
   });
   btnDots.addEventListener('click', () => {
+    // Increment counter before changing game
+    currentCounter++;
+    sendMessage({
+      type: 'setCounter',
+      data: { newCounter: currentCounter }
+    });
     sendMessage({
       type: 'gameAction',
       data: { type: 'changeGame', game: 'dots' }
     });
   });
   btnConnect4.addEventListener('click', () => {
+    // Increment counter before changing game
+    currentCounter++;
+    sendMessage({
+      type: 'setCounter',
+      data: { newCounter: currentCounter }
+    });
     sendMessage({
       type: 'gameAction',
       data: { type: 'changeGame', game: 'connect4' }
@@ -112,6 +149,13 @@
     // console.log('Received message:', event.data);
     if (event.data && event.data.type === 'gameState') {
       handleGameState(event.data.data);
+    } else if (event.data && event.data.type === 'initialData') {
+      handleInitialData(event.data.data);
+    } else if (event.data && event.data.type === 'updateCounter') {
+      // Update local counter when server confirms the change
+      if (event.data.data && typeof event.data.data.currentCounter === 'number') {
+        currentCounter = event.data.data.currentCounter;
+      }
     }
   });
 
